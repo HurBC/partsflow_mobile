@@ -10,4 +10,6 @@ sealed class Failure with _$Failure {
   factory Failure.server() = ServerFailure;
   factory Failure.unauthorization() = UnauthorizatedFailure;
   factory Failure.unknown() = UnknownFailure;
+  factory Failure.invalidCredentials() = InvalidCredentialsFailure;
+  factory Failure.temporaryPasswordExpired() = TemporaryPasswordExpiredFailure;
 }

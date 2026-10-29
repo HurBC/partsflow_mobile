@@ -1,30 +1,33 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+import 'dart:convert';
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:partsflow_mobile/core/utils/jwt_decoder.dart';
 
-import 'package:partsflow_mobile/main.dart';
+String _jwt(Map<String, dynamic> claims) {
+  String enc(Object o) =>
+      base64Url.encode(utf8.encode(jsonEncode(o))).replaceAll('=', '');
+  return '${enc({'alg': 'none'})}.${enc(claims)}.firma';
+}
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  group('decodeJwtPayload', () {
+    test('lee los claims del payload (incluye tildes y claves con ":")', () {
+      final claims = decodeJwtPayload(
+        _jwt({
+          'name': 'Camila',
+          'family_name': 'Rojas',
+          'custom:subsidiary_name': 'Ñuñoa',
+        }),
+      );
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+      expect(claims['name'], 'Camila');
+      expect(claims['family_name'], 'Rojas');
+      expect(claims['custom:subsidiary_name'], 'Ñuñoa');
+    });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    test('devuelve un mapa vacío con tokens inválidos', () {
+      expect(decodeJwtPayload('no-es-un-jwt'), isEmpty);
+      expect(decodeJwtPayload('a.%%%.c'), isEmpty);
+    });
   });
 }
