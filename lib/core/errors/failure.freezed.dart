@@ -55,7 +55,7 @@ extension FailurePatterns on Failure {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( ValidationFormFailure value)?  validationForms,TResult Function( NetworkFailure value)?  network,TResult Function( ServerFailure value)?  server,TResult Function( UnauthorizatedFailure value)?  unauthorization,TResult Function( UnknownFailure value)?  unknown,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( ValidationFormFailure value)?  validationForms,TResult Function( NetworkFailure value)?  network,TResult Function( ServerFailure value)?  server,TResult Function( UnauthorizatedFailure value)?  unauthorization,TResult Function( UnknownFailure value)?  unknown,TResult Function( InvalidCredentialsFailure value)?  invalidCredentials,TResult Function( TemporaryPasswordExpiredFailure value)?  temporaryPasswordExpired,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case ValidationFormFailure() when validationForms != null:
@@ -63,7 +63,9 @@ return validationForms(_that);case NetworkFailure() when network != null:
 return network(_that);case ServerFailure() when server != null:
 return server(_that);case UnauthorizatedFailure() when unauthorization != null:
 return unauthorization(_that);case UnknownFailure() when unknown != null:
-return unknown(_that);case _:
+return unknown(_that);case InvalidCredentialsFailure() when invalidCredentials != null:
+return invalidCredentials(_that);case TemporaryPasswordExpiredFailure() when temporaryPasswordExpired != null:
+return temporaryPasswordExpired(_that);case _:
   return orElse();
 
 }
@@ -81,7 +83,7 @@ return unknown(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( ValidationFormFailure value)  validationForms,required TResult Function( NetworkFailure value)  network,required TResult Function( ServerFailure value)  server,required TResult Function( UnauthorizatedFailure value)  unauthorization,required TResult Function( UnknownFailure value)  unknown,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( ValidationFormFailure value)  validationForms,required TResult Function( NetworkFailure value)  network,required TResult Function( ServerFailure value)  server,required TResult Function( UnauthorizatedFailure value)  unauthorization,required TResult Function( UnknownFailure value)  unknown,required TResult Function( InvalidCredentialsFailure value)  invalidCredentials,required TResult Function( TemporaryPasswordExpiredFailure value)  temporaryPasswordExpired,}){
 final _that = this;
 switch (_that) {
 case ValidationFormFailure():
@@ -89,7 +91,9 @@ return validationForms(_that);case NetworkFailure():
 return network(_that);case ServerFailure():
 return server(_that);case UnauthorizatedFailure():
 return unauthorization(_that);case UnknownFailure():
-return unknown(_that);}
+return unknown(_that);case InvalidCredentialsFailure():
+return invalidCredentials(_that);case TemporaryPasswordExpiredFailure():
+return temporaryPasswordExpired(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
 ///
@@ -103,7 +107,7 @@ return unknown(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( ValidationFormFailure value)?  validationForms,TResult? Function( NetworkFailure value)?  network,TResult? Function( ServerFailure value)?  server,TResult? Function( UnauthorizatedFailure value)?  unauthorization,TResult? Function( UnknownFailure value)?  unknown,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( ValidationFormFailure value)?  validationForms,TResult? Function( NetworkFailure value)?  network,TResult? Function( ServerFailure value)?  server,TResult? Function( UnauthorizatedFailure value)?  unauthorization,TResult? Function( UnknownFailure value)?  unknown,TResult? Function( InvalidCredentialsFailure value)?  invalidCredentials,TResult? Function( TemporaryPasswordExpiredFailure value)?  temporaryPasswordExpired,}){
 final _that = this;
 switch (_that) {
 case ValidationFormFailure() when validationForms != null:
@@ -111,7 +115,9 @@ return validationForms(_that);case NetworkFailure() when network != null:
 return network(_that);case ServerFailure() when server != null:
 return server(_that);case UnauthorizatedFailure() when unauthorization != null:
 return unauthorization(_that);case UnknownFailure() when unknown != null:
-return unknown(_that);case _:
+return unknown(_that);case InvalidCredentialsFailure() when invalidCredentials != null:
+return invalidCredentials(_that);case TemporaryPasswordExpiredFailure() when temporaryPasswordExpired != null:
+return temporaryPasswordExpired(_that);case _:
   return null;
 
 }
@@ -128,14 +134,16 @@ return unknown(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( Map<String, List<String>> fields)?  validationForms,TResult Function()?  network,TResult Function()?  server,TResult Function()?  unauthorization,TResult Function()?  unknown,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( Map<String, List<String>> fields)?  validationForms,TResult Function()?  network,TResult Function()?  server,TResult Function()?  unauthorization,TResult Function()?  unknown,TResult Function()?  invalidCredentials,TResult Function()?  temporaryPasswordExpired,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case ValidationFormFailure() when validationForms != null:
 return validationForms(_that.fields);case NetworkFailure() when network != null:
 return network();case ServerFailure() when server != null:
 return server();case UnauthorizatedFailure() when unauthorization != null:
 return unauthorization();case UnknownFailure() when unknown != null:
-return unknown();case _:
+return unknown();case InvalidCredentialsFailure() when invalidCredentials != null:
+return invalidCredentials();case TemporaryPasswordExpiredFailure() when temporaryPasswordExpired != null:
+return temporaryPasswordExpired();case _:
   return orElse();
 
 }
@@ -153,14 +161,16 @@ return unknown();case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( Map<String, List<String>> fields)  validationForms,required TResult Function()  network,required TResult Function()  server,required TResult Function()  unauthorization,required TResult Function()  unknown,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( Map<String, List<String>> fields)  validationForms,required TResult Function()  network,required TResult Function()  server,required TResult Function()  unauthorization,required TResult Function()  unknown,required TResult Function()  invalidCredentials,required TResult Function()  temporaryPasswordExpired,}) {final _that = this;
 switch (_that) {
 case ValidationFormFailure():
 return validationForms(_that.fields);case NetworkFailure():
 return network();case ServerFailure():
 return server();case UnauthorizatedFailure():
 return unauthorization();case UnknownFailure():
-return unknown();}
+return unknown();case InvalidCredentialsFailure():
+return invalidCredentials();case TemporaryPasswordExpiredFailure():
+return temporaryPasswordExpired();}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -174,14 +184,16 @@ return unknown();}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( Map<String, List<String>> fields)?  validationForms,TResult? Function()?  network,TResult? Function()?  server,TResult? Function()?  unauthorization,TResult? Function()?  unknown,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( Map<String, List<String>> fields)?  validationForms,TResult? Function()?  network,TResult? Function()?  server,TResult? Function()?  unauthorization,TResult? Function()?  unknown,TResult? Function()?  invalidCredentials,TResult? Function()?  temporaryPasswordExpired,}) {final _that = this;
 switch (_that) {
 case ValidationFormFailure() when validationForms != null:
 return validationForms(_that.fields);case NetworkFailure() when network != null:
 return network();case ServerFailure() when server != null:
 return server();case UnauthorizatedFailure() when unauthorization != null:
 return unauthorization();case UnknownFailure() when unknown != null:
-return unknown();case _:
+return unknown();case InvalidCredentialsFailure() when invalidCredentials != null:
+return invalidCredentials();case TemporaryPasswordExpiredFailure() when temporaryPasswordExpired != null:
+return temporaryPasswordExpired();case _:
   return null;
 
 }
@@ -381,6 +393,70 @@ int get hashCode => runtimeType.hashCode;
 @override
 String toString() {
   return 'Failure.unknown()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class InvalidCredentialsFailure implements Failure {
+   InvalidCredentialsFailure();
+  
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is InvalidCredentialsFailure);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'Failure.invalidCredentials()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class TemporaryPasswordExpiredFailure implements Failure {
+   TemporaryPasswordExpiredFailure();
+  
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is TemporaryPasswordExpiredFailure);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'Failure.temporaryPasswordExpired()';
 }
 
 
