@@ -498,9 +498,6 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
 
     _classify(s);
     final entries = _timeline(s);
-    final hasJulia = entries.any(
-      (e) => e is _Msg && e.message.author(myId) == MessageAuthor.julia,
-    );
     _lastEntries = entries;
     final reduce = MediaQuery.disableAnimationsOf(context);
     if (entries.isEmpty) {
@@ -562,7 +559,6 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
                 reduce,
                 joinedPrev: joinedPrev,
                 joinedNext: joinedNext,
-                reserveAvatar: hasJulia,
               ),
             },
           );
@@ -580,7 +576,6 @@ extension on _ChatDetailPageState {
     bool reduce, {
     bool joinedPrev = false,
     bool joinedNext = false,
-    bool reserveAvatar = false,
   }) {
     final kind = _takeEntrance(message.id);
     final animate = kind != null && !reduce;
@@ -592,7 +587,6 @@ extension on _ChatDetailPageState {
         myUserId: myId,
         joinedPrev: joinedPrev,
         joinedNext: joinedNext,
-        reserveAvatar: reserveAvatar,
         auraEntrance: animate && kind == MessageEntranceKind.incoming,
         flashSerial: _flashId == message.id ? _flashSerial : 0,
         onLongPress: () => _messageMenu(message),
