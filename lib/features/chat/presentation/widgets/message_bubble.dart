@@ -17,7 +17,6 @@ class MessageBubble extends StatelessWidget {
     this.onQuoteTap,
     this.onTemplate,
     this.auraEntrance = false,
-    this.reserveAvatar = false,
     this.flashSerial = 0,
     this.joinedPrev = false,
     this.joinedNext = false,
@@ -40,10 +39,6 @@ class MessageBubble extends StatelessWidget {
   /// Mensaje de Julia recién llegado en tiempo real: el aura del avatar entra
   /// más intensa y se asienta (una sola vez).
   final bool auraEntrance;
-
-  /// El hilo tiene mensajes de Julia: los salientes reservan el hueco del
-  /// avatar (36 px) a la derecha para quedar alineados.
-  final bool reserveAvatar;
 
   /// > 0 destella la burbuja (salto desde una cita); cambia para repetir.
   final int flashSerial;
@@ -344,9 +339,8 @@ class MessageBubble extends StatelessWidget {
     }
 
     // Avatar de Julia a la derecha, solo en el último mensaje del grupo; el
-    // resto (y los salientes de otros autores en hilos con Julia) reserva el
-    // mismo hueco.
-    if (isJulia || (reserveAvatar && !inbound)) {
+    // resto del grupo reserva el mismo hueco.
+    if (isJulia) {
       bubble = Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
