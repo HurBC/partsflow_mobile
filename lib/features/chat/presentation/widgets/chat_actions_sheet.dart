@@ -16,6 +16,8 @@ enum ChatAction {
   tags,
   issues,
   reminder,
+  important,
+  copyPhone,
 }
 
 /// Hoja de acciones. Devuelve la acción elegida o null.
@@ -88,6 +90,27 @@ class _ActionsSheet extends StatelessWidget {
         Icons.mark_email_unread_outlined,
         ChatAction.markUnread,
       ),
+      if (client?.isImportant ?? false)
+        _Item(
+          'Quitar de importantes',
+          Icons.star,
+          ChatAction.important,
+          enabled: canAct,
+        )
+      else
+        _Item(
+          'Marcar como importante',
+          Icons.star_border,
+          ChatAction.important,
+          enabled: canAct,
+        ),
+      if (chat.phone.isNotEmpty)
+        _Item(
+          'Copiar número',
+          Icons.copy_outlined,
+          ChatAction.copyPhone,
+          detail: formatPhone(chat.phone),
+        ),
       _Item(
         'Notas del cliente',
         Icons.sticky_note_2_outlined,

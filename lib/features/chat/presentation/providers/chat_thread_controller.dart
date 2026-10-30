@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:partsflow_mobile/core/errors/failure.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_event.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
 import 'package:partsflow_mobile/core/utils/json_utils.dart';
+import 'package:partsflow_mobile/core/utils/pf_log.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/domain/entities/api_user.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
@@ -389,11 +391,7 @@ class ChatThread extends _$ChatThread {
     final me = await _me();
     if (!ref.mounted) return;
     final reply = _takeReply();
-    final local = _local(
-      userId: me?.id,
-      text: body,
-      reply: reply.msg,
-    );
+    final local = _local(userId: me?.id, text: body, reply: reply.msg);
     _jobs[local.id] = _SendJob(
       text: body,
       quoteId: reply.id,
@@ -418,6 +416,10 @@ class ChatThread extends _$ChatThread {
     for (var i = 0; i < files.length && i < maxBatch; i++) {
       final f = files[i];
       final cap = i == 0 ? caption.trim() : '';
+      pfLog(
+        'adjunto ${i + 1}/${files.length}: file=${f.name} mime=${f.mime} '
+        'kind=${f.kind.name} bytes=${f.size} phone=${maskPhoneForLog(state.chat.phone)}',
+      );
       // Reglas de contrato: documento sin leyenda → nombre; audio → vacío.
       final text = f.kind == AttachmentKind.audio
           ? ''
@@ -502,11 +504,30 @@ class ChatThread extends _$ChatThread {
           _replacePending(id, (m) => m.copyWith(clearProgress: true));
           return null;
         case Err(:final failure):
-          return failureMessage(failure).startsWith('Sin conexión')
-              ? 'Sin conexión. Revisa tu internet.'
-              : 'No se pudo subir el archivo';
+          return _reasonText(failure, 'subir', job.file!.kind);
       }
     });
+  }
+
+  static String _kindNoun(AttachmentKind? k) => switch (k) {
+    AttachmentKind.audio => 'el audio',
+    AttachmentKind.image => 'la imagen',
+    AttachmentKind.video => 'el video',
+    AttachmentKind.document => 'el documento',
+    null => 'el mensaje',
+  };
+
+  /// "No se pudo subir el audio (HTTP 400: detalle)"; el detalle completo va
+  /// al log (pfLog).
+  static String _reasonText(Failure f, String verb, AttachmentKind? k) {
+    final what = _kindNoun(k);
+    return switch (f) {
+      NetworkFailure() => 'Sin conexión. Revisa tu internet.',
+      HttpFailure(:final reason) => 'No se pudo $verb $what ($reason)',
+      ServerFailure() => 'No se pudo $verb $what (error del servidor)',
+      UnauthorizatedFailure() => 'No se pudo $verb $what (sesión expirada)',
+      _ => 'No se pudo $verb $what',
+    };
   }
 
   Future<void> _deliver(String localId, ApiUser? me) async {
@@ -552,15 +573,17 @@ class ChatThread extends _$ChatThread {
             case SendStatus.conflict:
               error = 'Este cliente está asignado a otro operador';
             case SendStatus.rejected:
-              error = value.detail ?? 'No se pudo enviar el mensaje';
+              final what = _kindNoun(job.file?.kind);
+              error = value.detail == null
+                  ? 'No se pudo enviar $what'
+                  : 'No se pudo enviar $what (${value.detail})';
           }
         case Err(:final failure):
-          error = failureMessage(failure).startsWith('Sin conexión')
-              ? 'Sin conexión. Revisa tu internet.'
-              : 'No se pudo enviar el mensaje';
+          error = _reasonText(failure, 'enviar', job.file?.kind);
       }
     }
     if (error != null) {
+      pfLog('adjunto/mensaje con error visible: $error');
       _replacePending(
         localId,
         (m) =>
@@ -692,6 +715,16 @@ class ChatThread extends _$ChatThread {
     }
     return res;
   }
+
+  /// Igual que el BO (ChatDetailTobBar.tsx): PATCH clients/{id}/update/ con
+  /// `importance_level` 'high' (importante) o 'none'.
+  Future<ActionResult> setImportant(bool important) => _patch(
+    {'importance_level': important ? 'high' : 'none'},
+    (c, _) => c.copyWith(client: c.client!.copyWith(isImportant: important)),
+    important
+        ? 'Cliente marcado como importante'
+        : 'Cliente ya no es importante',
+  );
 
   Future<ActionResult> assignToMe() => _patch(
     {'responsible': #me},

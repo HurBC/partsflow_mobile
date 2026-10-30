@@ -40,4 +40,4 @@ final class AuthStateProvider
   }
 }
 
-String _$authStateHash() => r'1d7f3f33b22039d939952972f17253acba1a5dd3';
+String _$authStateHash() => r'8f86fd4f4c53cc697f22e4d2df723cf4dc4f1cbb';

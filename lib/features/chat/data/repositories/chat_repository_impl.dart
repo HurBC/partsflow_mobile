@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:partsflow_mobile/core/errors/failure.dart';
 import 'package:partsflow_mobile/core/utils/json_utils.dart';
+import 'package:partsflow_mobile/core/utils/pf_log.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/chat/data/datasources/chat_remote_datasource.dart';
 import 'package:partsflow_mobile/features/chat/data/mappers/chat_mapper.dart';
@@ -30,6 +31,17 @@ class ChatRepositoryImpl implements ChatRepository {
       if (status != null && status >= 500) return Failure.server();
     }
     return Failure.unknown();
+  }
+
+  /// Como [_fail] pero conserva el motivo (status + detalle) para la UI.
+  Failure _failReason(Object e) {
+    pfLog('error ${e.runtimeType}: ${truncateLog(e)}');
+    if (e is DioException) {
+      if (e.response == null) return Failure.network();
+      if (e.response?.statusCode == 401) return Failure.unauthorization();
+      return Failure.http(e.response?.statusCode, httpReason(e));
+    }
+    return Failure.http(null, shortError(e));
   }
 
   Future<Result<T>> _guard<T>(Future<T> Function() run) async {
@@ -69,6 +81,7 @@ class ChatRepositoryImpl implements ChatRepository {
           'pending': 'false',
         });
     }
+    p.addAll(q.advanced.toParams());
     final text = q.searchText.trim();
     if (text.isNotEmpty) {
       final prefix = q.searchMode.prefix;
@@ -94,6 +107,16 @@ class ChatRepositoryImpl implements ChatRepository {
       cursor: asStr(pg?['next_cursor']),
       cursorId: asStr(pg?['next_cursor_id']),
     );
+  });
+
+  @override
+  Future<Result<List<String>>> clientStatuses() => _guard(() async {
+    final data = await _remote.clientStatuses();
+    final raw = data is List ? data : asList(asMap(data)?['results']);
+    return [
+      for (final r in raw)
+        if (nonEmpty(asStr(r)) != null) asStr(r)!.trim(),
+    ];
   });
 
   @override
@@ -144,26 +167,25 @@ class ChatRepositoryImpl implements ChatRepository {
         return Result.ok(const SendOutcome(SendStatus.suppressed));
       }
       if (status != 201 && status != 200) {
-        return Result.ok(const SendOutcome(SendStatus.rejected));
+        return Result.ok(SendOutcome(SendStatus.rejected, 'HTTP $status'));
       }
       try {
         await _remote.setLastSellerMessage(chat.phone);
-      } catch (_) {}
+      } catch (e) {
+        pfLog('set_last_seller_message falló (ignorado): ${truncateLog(e)}');
+      }
       return Result.ok(const SendOutcome(SendStatus.sent));
     } on DioException catch (e) {
       final status = e.response?.statusCode;
-      final body = asMap(e.response?.data);
       if (status == 409) {
         return Result.ok(const SendOutcome(SendStatus.conflict));
       }
       if (status == 400) {
-        return Result.ok(
-          SendOutcome(SendStatus.rejected, nonEmpty(asStr(body?['detail']))),
-        );
+        return Result.ok(SendOutcome(SendStatus.rejected, httpReason(e)));
       }
-      return Result.err(_fail(e));
+      return Result.err(_failReason(e));
     } catch (e) {
-      return Result.err(_fail(e));
+      return Result.err(_failReason(e));
     }
   }
 
@@ -206,7 +228,19 @@ class ChatRepositoryImpl implements ChatRepository {
     required Chat chat,
     required OutgoingAttachment file,
     void Function(double progress)? onProgress,
-  }) => _guard(() async {
+  }) async {
+    try {
+      return Result.ok(await _upload(chat, file, onProgress));
+    } catch (e) {
+      return Result.err(_failReason(e));
+    }
+  }
+
+  Future<UploadedFile> _upload(
+    Chat chat,
+    OutgoingAttachment file,
+    void Function(double progress)? onProgress,
+  ) async {
     final data = asMap(
       await _remote.uploadFile(
         path: file.path,
@@ -221,9 +255,9 @@ class ChatRepositoryImpl implements ChatRepository {
       ),
     );
     final id = nonEmpty(asStr(data?['file_id']));
-    if (id == null) throw StateError('upload sin file_id');
+    if (id == null) throw StateError('la respuesta no trae file_id');
     return UploadedFile(fileId: id, fileName: asStr(data?['file_name']));
-  });
+  }
 
   static Uint8List? _decodeBase64(Object? data) {
     if (data is! String) return null;
@@ -367,7 +401,6 @@ class ChatRepositoryImpl implements ChatRepository {
 
   List<Object?> _items(Object? data) =>
       data is List ? data : asList(asMap(data)?['results']);
-
 
   @override
   Future<Result<List<ClientNote>>> clientNotes(

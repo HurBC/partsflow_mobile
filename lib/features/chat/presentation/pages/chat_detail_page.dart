@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +8,7 @@ import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
 import 'package:partsflow_mobile/core/router/app_routes.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/core/utils/foreground_poller.dart';
+import 'package:partsflow_mobile/core/utils/pf_log.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
@@ -17,7 +20,9 @@ import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_actions
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_client_sheets.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_common.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_composer.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_motion.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/message_bubble.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/swipe_to_reply.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/templates_sheet.dart';
 import 'package:partsflow_mobile/features/orders/domain/entities/order.dart';
 
@@ -54,6 +59,22 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
   final _keys = <String, GlobalKey>{};
   List<_Entry> _lastEntries = const [];
   late final ForegroundPoller _poller;
+  final _composerFocus = FocusNode();
+
+  // Entrada de mensajes nuevos. Solo anima lo que aparece DESPUÉS de cargado
+  // el hilo: el historial inicial, las páginas antiguas y los re-renders no.
+  final _known = <String>{};
+  bool _baselined = false;
+  DateTime? _newest;
+  final _enter = <String, ({MessageEntranceKind kind, DateTime at})>{};
+  final _played = <String>{};
+  // Firmas de mensajes locales ya animados, para no reanimar al confirmarse.
+  final _localSigs = <({String sig, DateTime at})>[];
+  static const _enterWindow = Duration(milliseconds: 1500);
+
+  String? _flashId;
+  int _flashSerial = 0;
+  Timer? _flashTimer;
 
   @override
   void initState() {
@@ -74,6 +95,8 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
   @override
   void dispose() {
     _poller.dispose();
+    _flashTimer?.cancel();
+    _composerFocus.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -91,6 +114,13 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     } else {
       context.go(AppRoutes.chat);
     }
+  }
+
+  Future<void> _copyPhone(String phone) async {
+    final text = formatPhone(phone).replaceAll(' ', '');
+    if (text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    _snack('Número copiado');
   }
 
   Future<void> _toggleJulia(bool current) async {
@@ -117,6 +147,8 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
         return showClientIssuesSheet(context, s.chat);
       case ChatAction.reminder:
         return showClientReminderSheet(context, s.chat);
+      case ChatAction.copyPhone:
+        return _copyPhone(s.chat.phone);
       default:
         break;
     }
@@ -124,6 +156,9 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     final r = switch (action) {
       ChatAction.assign => await c.assignToMe(),
       ChatAction.release => await c.release(),
+      ChatAction.important => await c.setImportant(
+        !(s.chat.client?.isImportant ?? false),
+      ),
       ChatAction.resolve => await c.setResolved(true),
       ChatAction.unresolve => await c.setResolved(false),
       ChatAction.markUnread => await c.markUnread(),
@@ -135,9 +170,17 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     if (r.ok && action == ChatAction.markUnread && mounted) _back();
   }
 
+  bool _canReply(Message m) => !m.isLocal && !m.hasError && !m.isDeleted;
+
+  /// Acción "Responder" (menú y deslizar): cita el mensaje y enfoca el composer.
+  void _reply(Message m) {
+    ref.read(chatThreadProvider(widget.chat).notifier).setReply(m);
+    _composerFocus.requestFocus();
+  }
+
   Future<void> _messageMenu(Message m) async {
-    final canReply = !m.isLocal && !m.hasError;
-    final hasText = m.text != null && m.text!.trim().isNotEmpty;
+    final canReply = _canReply(m);
+    final hasText = !m.isDeleted && m.text != null && m.text!.trim().isNotEmpty;
     if (!canReply && !hasText) return;
     final action = await showModalBottomSheet<String>(
       context: context,
@@ -167,48 +210,179 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     );
     if (!mounted || action == null) return;
     if (action == 'reply') {
-      ref.read(chatThreadProvider(widget.chat).notifier).setReply(m);
+      _reply(m);
     } else {
       await Clipboard.setData(ClipboardData(text: m.text!));
       _snack('Texto copiado');
     }
   }
 
-  /// Salta al mensaje citado si está cargado (por message_id, id o wid de Wali).
-  Future<void> _jumpTo(String wid) async {
-    final s = ref.read(chatThreadProvider(widget.chat));
-    final target = s.messages
-        .where((m) => m.id == wid || m.websocketId == wid || m.messageId == wid)
-        .firstOrNull;
-    if (target == null) return _snack('El mensaje original no está cargado');
-    Future<bool> reveal() async {
-      final ctx = _keys[target.id]?.currentContext;
-      if (ctx == null) return false;
-      await Scrollable.ensureVisible(
-        ctx,
-        duration: const Duration(milliseconds: 300),
-        alignment: 0.4,
-      );
-      return true;
-    }
+  bool _jumping = false;
 
-    if (await reveal() || !mounted || !_scroll.hasClients) {
+  Message? _findQuoted(String wid) => ref
+      .read(chatThreadProvider(widget.chat))
+      .messages
+      .where((m) => m.id == wid || m.websocketId == wid || m.messageId == wid)
+      .firstOrNull;
+
+  int _entryIndex(String id) =>
+      _lastEntries.indexWhere((e) => e is _Msg && e.message.id == id);
+
+  /// Alto promedio de los ítems construidos (estimación para la lista perezosa).
+  double _avgExtent() {
+    var total = 0.0;
+    var n = 0;
+    for (final k in _keys.values) {
+      final box = k.currentContext?.findRenderObject();
+      if (box is RenderBox && box.hasSize && box.attached) {
+        total += box.size.height + 8;
+        n++;
+      }
+    }
+    return n == 0 ? 90.0 : total / n;
+  }
+
+  /// Salta al mensaje citado (por message_id, id o websocket_id). Si no está
+  /// cargado, trae páginas antiguas (máx. 5); si está fuera del área construida
+  /// de la lista perezosa, se acerca por estimación (máx. 6 intentos).
+  Future<void> _jumpTo(String wid) async {
+    if (_jumping) return;
+    _jumping = true;
+    var pages = 0;
+    var attempts = 0;
+    var found = false;
+    var idx = -1;
+    try {
+      var target = _findQuoted(wid);
+      final controller = ref.read(chatThreadProvider(widget.chat).notifier);
+      if (target == null) _snack('Buscando mensaje original…');
+      while (target == null && pages < 5 && mounted) {
+        if (!ref.read(chatThreadProvider(widget.chat)).hasMoreOlder) break;
+        await controller.loadOlder();
+        pages++;
+        await WidgetsBinding.instance.endOfFrame;
+        target = _findQuoted(wid);
+      }
+      if (!mounted) return;
+      if (target == null) {
+        _snack('No se encontró el mensaje original');
+        return;
+      }
+      final id = target.id;
+      for (; attempts < 6; attempts++) {
+        if (!mounted) return;
+        final ctx = _keys[id]?.currentContext;
+        if (ctx != null && ctx.mounted) {
+          await Scrollable.ensureVisible(
+            ctx,
+            duration: const Duration(milliseconds: 300),
+            alignment: 0.5,
+          );
+          _flash(id);
+          found = true;
+          return;
+        }
+        idx = _entryIndex(id);
+        if (idx < 0 || !_scroll.hasClients) break;
+        final pos = _scroll.position;
+        final avg = _avgExtent();
+        // Lista invertida: índice mayor = más antiguo = más offset.
+        var dest = idx * avg;
+        final nearest = _nearestBuiltIndex(idx);
+        if (nearest != null) {
+          dest = pos.pixels + (idx - nearest) * avg;
+        }
+        _scroll.jumpTo(dest.clamp(0.0, pos.maxScrollExtent));
+        await WidgetsBinding.instance.endOfFrame;
+      }
+      if (mounted) _snack('No se encontró el mensaje original');
+    } finally {
+      _jumping = false;
+      pfLog(
+        'jumpTo wid=$wid found=$found index=$idx pages=$pages '
+        'attempts=$attempts',
+      );
+    }
+  }
+
+  /// Índice (en `_lastEntries`) del ítem construido más cercano a [idx].
+  int? _nearestBuiltIndex(int idx) {
+    int? best;
+    for (var i = 0; i < _lastEntries.length; i++) {
+      final e = _lastEntries[i];
+      if (e is! _Msg || _keys[e.message.id]?.currentContext == null) continue;
+      if (best == null || (i - idx).abs() < (best - idx).abs()) best = i;
+    }
+    return best;
+  }
+
+  void _flash(String id) {
+    if (!mounted) return;
+    _flashTimer?.cancel();
+    setState(() {
+      _flashId = id;
+      _flashSerial++;
+    });
+    _flashTimer = Timer(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _flashId = null);
+    });
+  }
+
+  String _sig(Message m) => '${m.hasMedia}|${(m.text ?? '').trim()}';
+
+  /// Detecta mensajes que aparecen después de cargado el hilo. Nuevo =
+  /// id desconocido y (local, o más reciente que todo lo conocido): así las
+  /// páginas antiguas nunca cuentan. Un mensaje del servidor que confirma uno
+  /// local (misma firma) no se anima otra vez.
+  void _classify(ThreadState s) {
+    if (!s.historyLoaded) return;
+    final all = [...s.messages, ...s.pending];
+    final now = DateTime.now();
+    _localSigs.removeWhere(
+      (e) => now.difference(e.at) > const Duration(minutes: 2),
+    );
+    if (!_baselined) {
+      _baselined = true;
+      for (final m in all) {
+        _known.add(m.id);
+        if (_newest == null || m.date.isAfter(_newest!)) _newest = m.date;
+      }
       return;
     }
-    // Fuera del área construida: acercarse por pasos hasta que se construya.
-    final idx = _lastEntries.indexWhere(
-      (e) => e is _Msg && e.message.id == target.id,
-    );
-    if (idx < 0) return;
-    for (var i = 0; i < 12 && mounted; i++) {
-      final pos = _scroll.position;
-      final dest = (idx * 90.0).clamp(0.0, pos.maxScrollExtent);
-      _scroll.jumpTo(dest);
-      await WidgetsBinding.instance.endOfFrame;
-      if (await reveal()) return;
-      if (dest >= pos.maxScrollExtent) break;
+    final base = _newest;
+    for (final m in all) {
+      if (!_known.add(m.id)) continue;
+      if (m.isLocal) {
+        _localSigs.add((sig: _sig(m), at: now));
+        _enter[m.id] = (kind: MessageEntranceKind.own, at: now);
+        continue;
+      }
+      if (base != null && !m.date.isAfter(base)) continue;
+      if (m.isOutbound) {
+        var i = _localSigs.indexWhere((e) => e.sig == _sig(m));
+        // Media: el tipo/leyenda local puede diferir del confirmado.
+        if (i < 0 && m.hasMedia) {
+          i = _localSigs.indexWhere((e) => e.sig.startsWith('true|'));
+        }
+        if (i >= 0) {
+          _localSigs.removeAt(i);
+          continue;
+        }
+      }
+      _enter[m.id] = (kind: MessageEntranceKind.incoming, at: now);
     }
-    _snack('No pudimos ubicar el mensaje original');
+    for (final m in all) {
+      if (_newest == null || m.date.isAfter(_newest!)) _newest = m.date;
+    }
+  }
+
+  /// true una sola vez por mensaje, mientras la detección sea reciente.
+  MessageEntranceKind? _takeEntrance(String id) {
+    final e = _enter[id];
+    if (e == null || _played.contains(id)) return null;
+    if (DateTime.now().difference(e.at) > _enterWindow) return null;
+    _played.add(id);
+    return e.kind;
   }
 
   List<_Entry> _timeline(ThreadState s) {
@@ -228,6 +402,23 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
       asc.add(e.entry);
     }
     return asc.reversed.toList();
+  }
+
+  /// ¿El mensaje de `entries[j]` es del mismo remitente que [m] y ≤ 2 min de
+  /// distancia, sin separador de día ni nota entre medio?
+  bool _joined(List<_Entry> entries, int j, Message m, String? myId) {
+    if (j < 0 || j >= entries.length) return false;
+    final o = entries[j];
+    if (o is! _Msg) return false;
+    final other = o.message;
+    if (other.isDeleted != m.isDeleted) return false;
+    final a = m.author(myId);
+    if (a != other.author(myId)) return false;
+    if (a != MessageAuthor.client &&
+        (m.senderName ?? m.agent) != (other.senderName ?? other.agent)) {
+      return false;
+    }
+    return m.date.difference(other.date).abs() <= const Duration(minutes: 2);
   }
 
   @override
@@ -259,6 +450,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
             onBack: _back,
             onToggleJulia: () => _toggleJulia(s.chat.client?.juliaOn ?? false),
             onMore: () => _openActions(s),
+            onCopyPhone: () => _copyPhone(s.chat.phone),
           ),
           if (s.order != null)
             _OrderStrip(
@@ -275,7 +467,11 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
               onTemplate: () => pickAndSendTemplate(context, ref, widget.chat),
             )
           else
-            ChatComposer(chat: widget.chat, templatesEnabled: applies),
+            ChatComposer(
+              chat: widget.chat,
+              templatesEnabled: applies,
+              focusNode: _composerFocus,
+            ),
         ],
       ),
     );
@@ -300,8 +496,13 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
       );
     }
 
+    _classify(s);
     final entries = _timeline(s);
+    final hasJulia = entries.any(
+      (e) => e is _Msg && e.message.author(myId) == MessageAuthor.julia,
+    );
     _lastEntries = entries;
+    final reduce = MediaQuery.disableAnimationsOf(context);
     if (entries.isEmpty) {
       return Center(
         child: Text(
@@ -334,8 +535,18 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
             );
           }
           final e = entries[i];
+          // `entries` va de nuevo a antiguo: i+1 es el vecino anterior.
+          final joinedPrev =
+              e is _Msg && _joined(entries, i + 1, e.message, myId);
+          final joinedNext =
+              e is _Msg && _joined(entries, i - 1, e.message, myId);
           return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
+            padding: EdgeInsets.fromLTRB(
+              0,
+              joinedPrev ? 1 : 4,
+              0,
+              joinedNext ? 1 : 4,
+            ),
             child: switch (e) {
               _Day(:final date) => _DayChip(label: dayLabel(date)),
               _Note(:final note) => Center(
@@ -344,26 +555,65 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
                   style: TextStyle(fontSize: 12, color: pf.text2),
                 ),
               ),
-              _Msg(:final message) => KeyedSubtree(
-                key: _keys.putIfAbsent(message.id, GlobalKey.new),
-                child: MessageBubble(
-                  message: message,
-                  myUserId: myId,
-                  onLongPress: () => _messageMenu(message),
-                  onQuoteTap: message.quotedWid == null
-                      ? null
-                      : () => _jumpTo(message.quotedWid!),
-                  onRetry: message.isLocal && message.hasError
-                      ? () => controller.retrySend(message.id)
-                      : null,
-                  onDiscard: message.isLocal && message.hasError
-                      ? () => controller.discardPending(message.id)
-                      : null,
-                ),
+              _Msg(:final message) => _messageRow(
+                message,
+                myId,
+                controller,
+                reduce,
+                joinedPrev: joinedPrev,
+                joinedNext: joinedNext,
+                reserveAvatar: hasJulia,
               ),
             },
           );
         },
+      ),
+    );
+  }
+}
+
+extension on _ChatDetailPageState {
+  Widget _messageRow(
+    Message message,
+    String? myId,
+    ChatThread controller,
+    bool reduce, {
+    bool joinedPrev = false,
+    bool joinedNext = false,
+    bool reserveAvatar = false,
+  }) {
+    final kind = _takeEntrance(message.id);
+    final animate = kind != null && !reduce;
+    final bubble = SwipeToReply(
+      enabled: _canReply(message),
+      onReply: () => _reply(message),
+      child: MessageBubble(
+        message: message,
+        myUserId: myId,
+        joinedPrev: joinedPrev,
+        joinedNext: joinedNext,
+        reserveAvatar: reserveAvatar,
+        auraEntrance: animate && kind == MessageEntranceKind.incoming,
+        flashSerial: _flashId == message.id ? _flashSerial : 0,
+        onLongPress: () => _messageMenu(message),
+        onQuoteTap: message.quotedWid == null
+            ? null
+            : () => _jumpTo(message.quotedWid!),
+        onTemplate: () => pickAndSendTemplate(context, ref, widget.chat),
+        onRetry: message.isLocal && message.hasError
+            ? () => controller.retrySend(message.id)
+            : null,
+        onDiscard: message.isLocal && message.hasError
+            ? () => controller.discardPending(message.id)
+            : null,
+      ),
+    );
+    return KeyedSubtree(
+      key: _keys.putIfAbsent(message.id, GlobalKey.new),
+      child: MessageEntrance(
+        animate: animate,
+        kind: kind ?? MessageEntranceKind.incoming,
+        child: bubble,
       ),
     );
   }
@@ -376,6 +626,7 @@ class _Header extends StatelessWidget {
     required this.onBack,
     required this.onToggleJulia,
     required this.onMore,
+    required this.onCopyPhone,
   });
 
   final ThreadState state;
@@ -383,6 +634,7 @@ class _Header extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback onToggleJulia;
   final VoidCallback onMore;
+  final VoidCallback onCopyPhone;
 
   @override
   Widget build(BuildContext context) {
@@ -397,7 +649,8 @@ class _Header extends StatelessWidget {
               ? 'Asignado a ti'
               : 'Asignado a ${responsible.fullName}');
     final julia = client?.juliaOn ?? false;
-    final phone = maskPhone(chat.phone);
+    final phone = formatPhone(chat.phone);
+    final important = client?.isImportant ?? false;
 
     return Container(
       padding: EdgeInsets.fromLTRB(
@@ -424,19 +677,45 @@ class _Header extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  chatDisplayName(chat),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.titleMedium?.copyWith(color: pf.text),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        chatDisplayName(chat),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: pf.text,
+                        ),
+                      ),
+                    ),
+                    if (important) ...[
+                      const SizedBox(width: 4),
+                      Semantics(
+                        label: 'Cliente importante',
+                        child: ExcludeSemantics(
+                          child: Icon(Icons.star, size: 18, color: pf.warnFg),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
-                Text(
-                  phone.isEmpty ? owner : '$phone · $owner',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: pf.text2,
-                    fontWeight: FontWeight.w400,
+                Semantics(
+                  button: phone.isNotEmpty,
+                  label: phone.isEmpty ? owner : 'Copiar número $phone, $owner',
+                  child: ExcludeSemantics(
+                    child: InkWell(
+                      onTap: phone.isEmpty ? null : onCopyPhone,
+                      child: Text(
+                        phone.isEmpty ? owner : '$phone · $owner',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: pf.text2,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ],

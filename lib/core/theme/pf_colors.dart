@@ -105,7 +105,7 @@ class PfColors extends ThemeExtension<PfColors> {
     bubbleOut: Color(0xFF181D84),
     bubbleOutText: Color(0xFFFFFFFF),
     bubbleOutTime: Color(0xFFC9CDF0),
-    bubbleJulia: Color(0xFFDCF7EE),
+    bubbleJulia: Color(0xFFFFFFFF),
   );
 
   // Valores de bg/surface/border/texto/error vienen de la SPEC; el resto
@@ -135,7 +135,7 @@ class PfColors extends ThemeExtension<PfColors> {
     bubbleOut: Color(0xFF2A32A8),
     bubbleOutText: Color(0xFFFFFFFF),
     bubbleOutTime: Color(0xFFC9CDF0),
-    bubbleJulia: Color(0xFF0F3D3A),
+    bubbleJulia: Color(0xFF1A2350),
   );
 
   static PfColors of(BuildContext context) =>

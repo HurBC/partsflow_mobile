@@ -21,6 +21,7 @@ import 'package:partsflow_mobile/features/chat/presentation/widgets/attachment_p
 import 'package:partsflow_mobile/features/chat/presentation/widgets/quick_answers_sheet.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/templates_sheet.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:partsflow_mobile/core/utils/pf_log.dart';
 import 'package:record/record.dart';
 
 enum _AttachAction { camera, gallery, file, quick, template }
@@ -30,9 +31,14 @@ class ChatComposer extends ConsumerStatefulWidget {
     super.key,
     required this.chat,
     required this.templatesEnabled,
+    this.focusNode,
   });
 
   final Chat chat;
+
+  /// Foco del campo de texto, si el padre quiere enfocarlo (p. ej. al deslizar
+  /// para responder). Si es null, el composer crea el suyo.
+  final FocusNode? focusNode;
 
   /// true si la cuenta es `api` (WhatsApp oficial): muestra "Plantilla".
   final bool templatesEnabled;
@@ -43,11 +49,14 @@ class ChatComposer extends ConsumerStatefulWidget {
 
 class _ChatComposerState extends ConsumerState<ChatComposer> {
   final _controller = TextEditingController();
-  final _focus = FocusNode();
+  late final FocusNode _focus = widget.focusNode ?? (_ownFocus = FocusNode());
+  FocusNode? _ownFocus;
+  bool _sendPressed = false;
   final _picker = ImagePicker();
   AudioRecorder? _recorder;
   bool _hasText = false;
   bool _recording = false;
+  _RecFormat _recFormat = _opusFormat;
   bool _stopping = false;
   Duration _elapsed = Duration.zero;
   Timer? _ticker;
@@ -75,7 +84,7 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
     _ticker?.cancel();
     _recorder?.cancel().whenComplete(() => _recorder?.dispose());
     _controller.dispose();
-    _focus.dispose();
+    _ownFocus?.dispose();
     super.dispose();
   }
 
@@ -164,8 +173,9 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
           mime: x.mimeType,
         ),
       ]);
-    } catch (_) {
-      _snack('No se pudo abrir la cámara');
+    } catch (e) {
+      pfLog('adjuntar/camera falló: ${truncateLog(e)}');
+      _snack('No se pudo abrir la cámara: ${shortError(e)}');
     }
   }
 
@@ -187,8 +197,9 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
         );
       }
       await _preview(files);
-    } catch (_) {
-      _snack('No se pudo abrir la galería');
+    } catch (e) {
+      pfLog('adjuntar/gallery falló: ${truncateLog(e)}');
+      _snack('No se pudo abrir la galería: ${shortError(e)}');
     }
   }
 
@@ -203,17 +214,19 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
         files.add(await attachmentFromPath(path, name: f.name));
       }
       await _preview(files);
-    } catch (_) {
-      _snack('No se pudo abrir el selector de archivos');
+    } catch (e) {
+      pfLog('adjuntar/files falló: ${truncateLog(e)}');
+      _snack('No se pudo abrir el selector de archivos: ${shortError(e)}');
     }
   }
 
   /// Valida tamaño/cantidad, muestra la vista previa y envía.
-  Future<void> _preview(
+  /// Devuelve true si el usuario confirmó el envío.
+  Future<bool> _preview(
     List<OutgoingAttachment> files, {
     String caption = '',
   }) async {
-    if (!mounted) return;
+    if (!mounted) return false;
     final ok = <OutgoingAttachment>[];
     final tooBig = <String>[];
     for (final f in files) {
@@ -235,14 +248,59 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       batch = batch.sublist(0, ChatThread.maxBatch);
       _snack('Máximo ${ChatThread.maxBatch} archivos por envío');
     }
-    if (batch.isEmpty) return;
+    if (batch.isEmpty) return false;
     final res = await showAttachmentPreview(
       context,
       batch,
       initialCaption: caption,
     );
-    if (res == null || !mounted) return;
+    if (res == null || !mounted) return false;
     unawaited(_thread.sendAttachments(res.files, res.caption));
+    return true;
+  }
+
+  // ---- Imágenes insertadas desde el teclado (Gboard, GIF, portapapeles) --------
+
+  static const _insertMimes = [
+    'image/png',
+    'image/jpeg',
+    'image/gif',
+    'image/webp',
+  ];
+
+  Future<void> _onContentInserted(KeyboardInsertedContent content) async {
+    try {
+      final bytes = content.data;
+      if (bytes == null || bytes.isEmpty) {
+        _snack('No se pudo leer la imagen del teclado');
+        return;
+      }
+      final ext = switch (content.mimeType) {
+        'image/png' => 'png',
+        'image/gif' => 'gif',
+        'image/webp' => 'webp',
+        _ => 'jpg',
+      };
+      final file = await writeTemp(
+        bytes,
+        'pegado-${DateTime.now().millisecondsSinceEpoch}.$ext',
+      );
+      final att = await attachmentFromPath(
+        file.path,
+        name: file.path.split('/').last,
+        mime: content.mimeType,
+      );
+      // El texto escrito pasa a ser el pie inicial; si cancela, se restituye.
+      final caption = _controller.text.trim();
+      _controller.clear();
+      final sent = await _preview([att], caption: caption);
+      if (!sent && mounted && _controller.text.isEmpty && caption.isNotEmpty) {
+        _controller.text = caption;
+      }
+    } catch (e) {
+      pfLog('adjuntar/teclado falló: ${truncateLog(e)}');
+      _snack('No se pudo adjuntar la imagen: ${shortError(e)}');
+    }
   }
 
   // ---- Respuestas rápidas ------------------------------------------------------
@@ -306,17 +364,25 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
     final rec = _recorder ??= AudioRecorder();
     try {
       final allowed = await rec.hasPermission();
+      pfLog('record: hasPermission=$allowed');
       if (!allowed) {
         if (mounted) await _explainMic();
         return;
       }
+      // Opus en OGG (Android 10+), o WAV si no hay opus. Nunca M4A: Wali
+      // decodifica con ffmpeg por pipe y un MP4 grabado en Android lleva el
+      // índice (moov) al final, ilegible así ("Decoding failed").
+      final opus = await rec.isEncoderSupported(AudioEncoder.opus);
+      _recFormat = opus ? _opusFormat : _wavFormat;
+      final config = _recFormat.config;
       final dir = await getTemporaryDirectory();
       final path =
-          '${dir.path}/pf_rec_${DateTime.now().millisecondsSinceEpoch}.m4a';
-      await rec.start(
-        const RecordConfig(encoder: AudioEncoder.aacLc),
-        path: path,
+          '${dir.path}/pf_rec_${DateTime.now().millisecondsSinceEpoch}.${_recFormat.ext}';
+      pfLog(
+        'record: start encoder=${config.encoder.name} opus=$opus path=$path',
       );
+      await rec.start(config, path: path);
+      pfLog('record: started');
       if (!mounted) return;
       _focus.unfocus();
       setState(() {
@@ -327,8 +393,11 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
         if (mounted) setState(() => _elapsed += const Duration(seconds: 1));
       });
-    } catch (_) {
-      _snack('No se pudo iniciar la grabación');
+    } catch (e, st) {
+      pfLog(
+        'record: start falló: ${truncateLog(e)}\n${truncateLog(st, max: 400)}',
+      );
+      _snack('No se pudo grabar: ${shortError(e)}');
     }
   }
 
@@ -354,7 +423,10 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
     setState(() => _recording = false);
     try {
       await _recorder?.cancel();
-    } catch (_) {}
+      pfLog('record: cancelado');
+    } catch (e) {
+      pfLog('record: cancel falló: ${truncateLog(e)}');
+    }
   }
 
   Future<void> _sendRecording() async {
@@ -364,29 +436,48 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
     final seconds = _elapsed.inSeconds;
     try {
       final path = await _recorder?.stop();
+      pfLog('record: stop path=$path seconds=$seconds');
       if (!mounted) return;
       setState(() => _recording = false);
       if (path == null || seconds < 1) {
         _snack('Audio muy corto. Mantén la grabación al menos un segundo');
         return;
       }
-      final name = 'audio-${DateTime.now().millisecondsSinceEpoch}.m4a';
-      final size = await File(path).length();
+      final file = File(path);
+      final exists = await file.exists();
+      final size = exists ? await file.length() : 0;
+      pfLog(
+        'record: archivo exists=$exists size=$size '
+        'codec=${_recFormat.config.encoder.name} mime=${_recFormat.mime} '
+        'name=${path.split('/').last}',
+      );
+      if (!exists || size == 0) {
+        _snack(
+          'No se pudo grabar: el archivo de audio quedó '
+          '${exists ? 'vacío' : 'sin crear'}',
+        );
+        return;
+      }
+      final name =
+          'audio-${DateTime.now().millisecondsSinceEpoch}.${_recFormat.ext}';
       unawaited(
         _thread.sendAttachments([
           OutgoingAttachment(
             path: path,
             name: name,
-            mime: 'audio/mp4',
+            mime: _recFormat.mime,
             kind: AttachmentKind.audio,
             size: size,
           ),
         ], ''),
       );
-    } catch (_) {
+    } catch (e, st) {
+      pfLog(
+        'record: stop falló: ${truncateLog(e)}\n${truncateLog(st, max: 400)}',
+      );
       if (mounted) {
         setState(() => _recording = false);
-        _snack('No se pudo guardar la grabación');
+        _snack('No se pudo grabar: ${shortError(e)}');
       }
     } finally {
       _stopping = false;
@@ -412,6 +503,9 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
   Widget build(BuildContext context) {
     final pf = PfColors.of(context);
     final primary = Theme.of(context).colorScheme.primary;
+    final reduce = MediaQuery.disableAnimationsOf(context);
+    Duration motion(int ms) =>
+        reduce ? Duration.zero : Duration(milliseconds: ms);
     final reply = ref.watch(
       chatThreadProvider(widget.chat).select((s) => s.replyTo),
     );
@@ -434,14 +528,26 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
               query: slash,
               onPick: (qa) => _applyQuick(qa, fromSlash: true),
             ),
-          if (reply != null && !_recording)
-            _ReplyBar(
-              label: _replyLabel(reply),
-              body: reply.quoteBody == reply.type
-                  ? labelForType(reply.type)
-                  : reply.quoteBody,
-              onCancel: () => _thread.setReply(null),
+          AnimatedSize(
+            duration: motion(180),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: AnimatedSwitcher(
+              duration: motion(180),
+              transitionBuilder: (child, a) =>
+                  FadeTransition(opacity: a, child: child),
+              child: reply != null && !_recording
+                  ? _ReplyBar(
+                      key: ValueKey(reply.id),
+                      label: _replyLabel(reply),
+                      body: reply.quoteBody == reply.type
+                          ? labelForType(reply.type)
+                          : reply.quoteBody,
+                      onCancel: () => _thread.setReply(null),
+                    )
+                  : const SizedBox(width: double.infinity),
             ),
+          ),
           Padding(
             padding: EdgeInsets.fromLTRB(
               8,
@@ -482,6 +588,11 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
                           child: TextField(
                             controller: _controller,
                             focusNode: _focus,
+                            contentInsertionConfiguration:
+                                ContentInsertionConfiguration(
+                                  allowedMimeTypes: _insertMimes,
+                                  onContentInserted: _onContentInserted,
+                                ),
                             minLines: 1,
                             maxLines: 5,
                             textCapitalization: TextCapitalization.sentences,
@@ -513,13 +624,35 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
                             child: InkWell(
                               customBorder: const CircleBorder(),
                               onTap: _hasText ? _submit : _startRecording,
-                              child: SizedBox(
-                                width: 48,
-                                height: 48,
-                                child: Icon(
-                                  _hasText ? Icons.send : Icons.mic,
-                                  size: 22,
-                                  color: Colors.white,
+                              child: Listener(
+                                onPointerDown: (_) =>
+                                    setState(() => _sendPressed = true),
+                                onPointerUp: (_) =>
+                                    setState(() => _sendPressed = false),
+                                onPointerCancel: (_) =>
+                                    setState(() => _sendPressed = false),
+                                child: AnimatedScale(
+                                  scale: _sendPressed ? 0.88 : 1,
+                                  duration: motion(100),
+                                  curve: Curves.easeOut,
+                                  child: SizedBox(
+                                    width: 48,
+                                    height: 48,
+                                    child: AnimatedSwitcher(
+                                      duration: motion(160),
+                                      transitionBuilder: (child, a) =>
+                                          ScaleTransition(
+                                            scale: a,
+                                            child: child,
+                                          ),
+                                      child: Icon(
+                                        _hasText ? Icons.send : Icons.mic,
+                                        key: ValueKey(_hasText),
+                                        size: 22,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
@@ -646,6 +779,7 @@ class _MenuTile extends StatelessWidget {
 
 class _ReplyBar extends StatelessWidget {
   const _ReplyBar({
+    super.key,
     required this.label,
     required this.body,
     required this.onCancel,
@@ -778,3 +912,29 @@ class _SlashPanel extends ConsumerWidget {
     );
   }
 }
+
+/// Formato de grabación: lo que `record` produce y cómo se sube a Wali.
+class _RecFormat {
+  const _RecFormat(this.config, this.ext, this.mime);
+
+  final RecordConfig config;
+  final String ext;
+  final String mime;
+}
+
+const _opusFormat = _RecFormat(
+  RecordConfig(
+    encoder: AudioEncoder.opus,
+    sampleRate: 48000,
+    numChannels: 1,
+    bitRate: 32000,
+  ),
+  'ogg',
+  'audio/ogg',
+);
+
+const _wavFormat = _RecFormat(
+  RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1),
+  'wav',
+  'audio/wav',
+);

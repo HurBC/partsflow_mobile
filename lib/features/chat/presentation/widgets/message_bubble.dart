@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.dart';
+import 'package:partsflow_mobile/features/chat/presentation/utils/send_errors.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/message_media.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/message_ticks.dart';
 
@@ -14,6 +15,12 @@ class MessageBubble extends StatelessWidget {
     this.onDiscard,
     this.onLongPress,
     this.onQuoteTap,
+    this.onTemplate,
+    this.auraEntrance = false,
+    this.reserveAvatar = false,
+    this.flashSerial = 0,
+    this.joinedPrev = false,
+    this.joinedNext = false,
   });
 
   final Message message;
@@ -27,9 +34,29 @@ class MessageBubble extends StatelessWidget {
   /// Tocar la cita: saltar al mensaje original si está cargado.
   final VoidCallback? onQuoteTap;
 
+  /// Error 131047 (fuera de la ventana de 24 h): abre el flujo de plantillas.
+  final VoidCallback? onTemplate;
+
+  /// Mensaje de Julia recién llegado en tiempo real: el aura del avatar entra
+  /// más intensa y se asienta (una sola vez).
+  final bool auraEntrance;
+
+  /// El hilo tiene mensajes de Julia: los salientes reservan el hueco del
+  /// avatar (36 px) a la derecha para quedar alineados.
+  final bool reserveAvatar;
+
+  /// > 0 destella la burbuja (salto desde una cita); cambia para repetir.
+  final int flashSerial;
+
+  /// Agrupación estilo WhatsApp: el mensaje anterior / siguiente es del mismo
+  /// remitente y llegó casi junto. Cambia esquinas y oculta la etiqueta.
+  final bool joinedPrev;
+  final bool joinedNext;
+
   @override
   Widget build(BuildContext context) {
     final pf = PfColors.of(context);
+    final dark = Theme.of(context).brightness == Brightness.dark;
     final author = message.author(myUserId);
     final inbound = author == MessageAuthor.client;
     final ai = switch (author) {
@@ -48,7 +75,9 @@ class MessageBubble extends StatelessWidget {
         : pf.bubbleOut;
     final fg = navy ? pf.bubbleOutText : pf.text;
     final timeColor = navy ? pf.bubbleOutTime : pf.text2;
-    final readColor = navy ? pf.mint : (ai ? pf.juliaFg : pf.link);
+    final readColor = navy
+        ? pf.mint
+        : (ai ? (dark ? pf.mint : pf.juliaFg) : pf.link);
 
     final label = switch (author) {
       MessageAuthor.julia => 'Julia',
@@ -59,106 +88,199 @@ class MessageBubble extends StatelessWidget {
       _ => null,
     };
 
+    // Lado del remitente: las esquinas que tocan a un vecino bajan a 5 px;
+    // el último del grupo conserva la "cola" (4 px) abajo.
+    final top = Radius.circular(joinedPrev ? 5 : 16);
+    final bottom = Radius.circular(joinedNext ? 5 : 4);
+    const full = Radius.circular(16);
     final radius = BorderRadius.only(
-      topLeft: const Radius.circular(16),
-      topRight: const Radius.circular(16),
-      bottomLeft: Radius.circular(inbound ? 4 : 16),
-      bottomRight: Radius.circular(inbound ? 16 : 4),
+      topLeft: inbound ? top : full,
+      topRight: inbound ? full : top,
+      bottomLeft: inbound ? bottom : full,
+      bottomRight: inbound ? full : bottom,
     );
 
     final maxWidth = MediaQuery.sizeOf(context).width * 0.8;
     final isImage =
+        !message.isDeleted &&
         message.type == 'image' &&
         (message.mediaUrl != null || message.localPath != null);
-    final text = message.text;
+    final deleted = message.isDeleted;
+    var text = deleted ? null : message.text;
+    // Documento cuyo pie repite el nombre del archivo: no se muestra dos veces.
+    if (text != null &&
+        message.type == 'document' &&
+        text.trim() == message.mediaFilename?.trim()) {
+      text = null;
+    }
+    final isTemplate = !deleted && message.type == 'template';
+    final inlineMeta = text != null && text.isNotEmpty && !isImage;
 
-    final bubble = Container(
-      constraints: BoxConstraints(maxWidth: maxWidth),
-      padding: isImage
-          ? const EdgeInsets.all(4)
-          : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: radius,
-        boxShadow: inbound
-            ? const [
-                BoxShadow(
-                  color: Color(0x0F0F1222),
-                  blurRadius: 1,
-                  offset: Offset(0, 1),
-                ),
-              ]
-            : null,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (label != null)
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                isImage ? 8 : 0,
-                isImage ? 4 : 0,
-                0,
-                2,
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (ai) ...[
-                    Icon(Icons.auto_awesome, size: 12, color: pf.juliaFg),
-                    const SizedBox(width: 5),
-                  ],
-                  Flexible(
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: ai ? pf.juliaFg : pf.bubbleOutTime,
-                      ),
+    final isJulia = author == MessageAuthor.julia;
+    final reduce = MediaQuery.disableAnimationsOf(context);
+
+    final meta = Row(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        if (message.isEdited && !deleted) ...[
+          Text(
+            'Editado',
+            style: TextStyle(
+              fontSize: 11,
+              fontStyle: FontStyle.italic,
+              color: timeColor,
+            ),
+          ),
+          const SizedBox(width: 6),
+        ],
+        Text(
+          hm(message.date),
+          style: TextStyle(fontSize: 11, color: timeColor),
+        ),
+        if (message.isOutbound && !deleted) ...[
+          const SizedBox(width: 4),
+          MessageTicks(
+            status: message.hasError ? 'error' : message.status,
+            color: timeColor,
+            readColor: readColor,
+            errorColor: pf.errIcon,
+          ),
+        ],
+      ],
+    );
+
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (label != null && !joinedPrev)
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              isImage ? 8 : 0,
+              isImage ? 4 : 0,
+              0,
+              2,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: ai
+                          ? (dark ? pf.mint : pf.juliaFg)
+                          : pf.bubbleOutTime,
                     ),
                   ),
-                ],
-              ),
-            ),
-          if (message.quotedBody != null || message.quotedType != null)
-            _Quoted(message: message, navy: navy, onTap: onQuoteTap),
-          if (message.localPath != null)
-            LocalMediaView(message: message, color: fg)
-          else if (isImage)
-            _ImageContent(url: message.mediaUrl!, bg: pf.divider)
-          else
-            switch (message.type) {
-              'audio' || 'ptt' || 'voice'
-                  when message.mediaId != null || message.mediaUrl != null =>
-                AudioMessageView(
-                  message: message,
-                  color: fg,
-                  accent: readColor,
                 ),
-              'video'
-                  when message.mediaId != null || message.mediaUrl != null =>
-                VideoMessageView(message: message, color: fg),
-              'document'
-                  when message.mediaId != null || message.mediaUrl != null =>
-                DocumentMessageView(message: message, color: fg),
-              'location' => LocationMessageView(message: message, color: fg),
-              'contacts' when message.contacts.isNotEmpty =>
-                ContactsMessageView(message: message, color: fg),
-              'text' when text != null => const SizedBox.shrink(),
-              _ => _TypeChip(message: message, color: fg),
-            },
+              ],
+            ),
+          ),
+        if (deleted)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.block, size: 14, color: fg.withValues(alpha: 0.7)),
+              const SizedBox(width: 6),
+              Text(
+                'Mensaje eliminado',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontStyle: FontStyle.italic,
+                  color: fg.withValues(alpha: 0.7),
+                ),
+              ),
+            ],
+          )
+        else if (message.quotedBody != null || message.quotedType != null)
+          _Quoted(message: message, navy: navy, onTap: onQuoteTap),
+        if (deleted)
+          const SizedBox.shrink()
+        else if (message.localPath != null)
+          LocalMediaView(message: message, color: fg)
+        else if (isImage)
+          _ImageContent(url: message.mediaUrl!, bg: pf.divider)
+        else
+          switch (message.type) {
+            'audio' || 'ptt' || 'voice'
+                when message.mediaId != null || message.mediaUrl != null =>
+              AudioMessageView(message: message, color: fg, accent: readColor),
+            'video' when message.mediaId != null || message.mediaUrl != null =>
+              VideoMessageView(message: message, color: fg),
+            'document'
+                when message.mediaId != null || message.mediaUrl != null =>
+              DocumentMessageView(message: message, color: fg),
+            'location' => LocationMessageView(message: message, color: fg),
+            'contacts' when message.contacts.isNotEmpty => ContactsMessageView(
+              message: message,
+              color: fg,
+            ),
+            // Tipos que el BO muestra como texto plano (campo `message`).
+            'text' ||
+            'template' ||
+            'button' ||
+            'interactive' ||
+            'link_preview' when text != null => const SizedBox.shrink(),
+            _ => _TypeChip(message: message, color: fg),
+          },
+        if (isTemplate)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 3),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.description_outlined, size: 12, color: timeColor),
+                const SizedBox(width: 4),
+                Text(
+                  'Plantilla',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: timeColor,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        if (inlineMeta)
+          // Hora y ticks en la última línea del texto si caben (un espacio
+          // invisible del tamaño de `meta` reserva el hueco); si no, bajan.
+          Stack(
+            children: [
+              Text.rich(
+                TextSpan(
+                  text: text,
+                  children: [
+                    WidgetSpan(
+                      alignment: PlaceholderAlignment.bottom,
+                      child: Visibility(
+                        visible: false,
+                        maintainSize: true,
+                        maintainAnimation: true,
+                        maintainState: true,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: meta,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                style: TextStyle(fontSize: 15, height: 21 / 15, color: fg),
+              ),
+              Positioned(right: 0, bottom: 2, child: meta),
+            ],
+          )
+        else ...[
           if (text != null && text.isNotEmpty)
             Padding(
-              padding: EdgeInsets.fromLTRB(
-                isImage ? 8 : 0,
-                isImage ? 6 : 0,
-                isImage ? 8 : 0,
-                0,
-              ),
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
               child: Text(
                 text,
                 style: TextStyle(fontSize: 15, height: 21 / 15, color: fg),
@@ -171,31 +293,79 @@ class MessageBubble extends StatelessWidget {
               isImage ? 8 : 0,
               isImage ? 4 : 0,
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                Text(
-                  hm(message.date),
-                  style: TextStyle(fontSize: 11, color: timeColor),
-                ),
-                if (message.isOutbound) ...[
-                  const SizedBox(width: 4),
-                  MessageTicks(
-                    status: message.hasError ? 'error' : message.status,
-                    color: timeColor,
-                    readColor: readColor,
-                    errorColor: navy ? pf.errIcon : pf.errIcon,
-                  ),
-                ],
-              ],
-            ),
+            child: meta,
           ),
         ],
-      ),
+      ],
     );
 
-    final error = message.errorText;
+    Widget decorated(double flash) {
+      final color = Color.alphaBlend(
+        pf.mint.withValues(alpha: 0.5 * flash),
+        bg,
+      );
+      return Container(
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        padding: isImage
+            ? const EdgeInsets.all(4)
+            : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: radius,
+          border: isJulia
+              ? Border.all(
+                  color: pf.mint.withValues(alpha: dark ? 0.28 : 0.55),
+                  width: 1,
+                )
+              : null,
+          boxShadow: !isJulia && inbound
+              ? const [
+                  BoxShadow(
+                    color: Color(0x0F0F1222),
+                    blurRadius: 1,
+                    offset: Offset(0, 1),
+                  ),
+                ]
+              : null,
+        ),
+        child: content,
+      );
+    }
+
+    var bubble = decorated(0);
+    if (flashSerial > 0) {
+      bubble = TweenAnimationBuilder<double>(
+        key: ValueKey('flash-$flashSerial'),
+        tween: Tween(begin: 1, end: 0),
+        duration: const Duration(milliseconds: 900),
+        curve: Curves.easeOut,
+        builder: (context, flash, _) => decorated(flash),
+      );
+    }
+
+    // Avatar de Julia a la derecha, solo en el último mensaje del grupo; el
+    // resto (y los salientes de otros autores en hilos con Julia) reserva el
+    // mismo hueco.
+    if (isJulia || (reserveAvatar && !inbound)) {
+      bubble = Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Flexible(child: bubble),
+          const SizedBox(width: 8),
+          if (isJulia && !joinedNext)
+            _JuliaAvatar(animate: auraEntrance && !reduce)
+          else
+            const SizedBox(width: 28),
+        ],
+      );
+    }
+
+    final code = message.errorCode;
+    final error =
+        message.errorText ?? (code == null ? null : sendErrorText(code));
+    final windowError =
+        code != null && isWindowError(code) && onTemplate != null;
     return Align(
       alignment: inbound ? Alignment.centerLeft : Alignment.centerRight,
       child: Column(
@@ -223,7 +393,15 @@ class MessageBubble extends StatelessWidget {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 spacing: 8,
                 children: [
-                  Text(error, style: TextStyle(fontSize: 12, color: pf.errFg)),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: maxWidth),
+                    child: Text(
+                      error,
+                      textAlign: TextAlign.end,
+                      style: TextStyle(fontSize: 12, color: pf.errFg),
+                    ),
+                  ),
+                  if (windowError) _MiniAction('Enviar plantilla', onTemplate!),
                   if (onRetry != null) _MiniAction('Reintentar', onRetry!),
                   if (onDiscard != null) _MiniAction('Descartar', onDiscard!),
                 ],
@@ -236,13 +414,78 @@ class MessageBubble extends StatelessWidget {
 
   String _semanticLabel(String? label, MessageAuthor author) {
     final who = author == MessageAuthor.client ? 'Cliente' : (label ?? 'Tú');
-    final body = message.text?.isNotEmpty == true
-        ? message.text!
-        : labelForType(message.type);
+    final body = message.isDeleted
+        ? 'Mensaje eliminado'
+        : (message.text?.isNotEmpty == true
+              ? message.text!
+              : labelForType(message.type));
     final status = message.isOutbound
         ? ', ${MessageTicks.labelFor(message.hasError ? 'error' : message.status)}'
         : '';
-    return '$who, ${hm(message.date)}: $body$status';
+    final edited = message.isEdited && !message.isDeleted ? ', editado' : '';
+    final err = message.errorCode == null
+        ? ''
+        : '. ${sendErrorText(message.errorCode!)}';
+    return '$who, ${hm(message.date)}: $body$edited$status$err';
+  }
+}
+
+class _JuliaAvatar extends StatelessWidget {
+  const _JuliaAvatar({required this.animate});
+
+  final bool animate;
+
+  @override
+  Widget build(BuildContext context) {
+    final pf = PfColors.of(context);
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final ring = dark ? 0.20 : 0.25;
+    final glow = dark ? 0.55 : 0.6;
+    Widget avatar(double t) {
+      // t (1..0): entrada; el glow parte intenso (~0,85) y se asienta.
+      final glowAlpha = glow + (0.85 - glow) * t;
+      return Container(
+        width: 28,
+        height: 28,
+        decoration: BoxDecoration(
+          color: pf.mint,
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: pf.mint.withValues(alpha: ring),
+              spreadRadius: 3,
+              blurRadius: 0,
+            ),
+            BoxShadow(
+              color: pf.mint.withValues(alpha: glowAlpha),
+              spreadRadius: dark ? 3 : 2,
+              blurRadius: dark ? 18 : 16,
+            ),
+          ],
+        ),
+        child: Icon(Icons.auto_awesome, size: 16, color: pf.onMint),
+      );
+    }
+
+    if (!animate) return avatar(0);
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0.6, end: 1),
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutBack,
+          builder: (context, scale, child) =>
+              Transform.scale(scale: scale, child: child),
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 1, end: 0),
+            duration: const Duration(milliseconds: 1200),
+            curve: Curves.easeOutCubic,
+            builder: (context, t, _) => avatar(t),
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -288,6 +531,7 @@ class _Quoted extends StatelessWidget {
     final body =
         message.quotedBody ?? labelForType(message.quotedType ?? 'text');
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Container(
         margin: const EdgeInsets.only(bottom: 6),

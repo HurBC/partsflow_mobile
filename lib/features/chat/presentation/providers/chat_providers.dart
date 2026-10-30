@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:partsflow_mobile/core/errors/failure.dart';
 import 'package:partsflow_mobile/core/network/dio_client.dart';
 import 'package:partsflow_mobile/core/providers/auth_state_provider.dart';
+import 'package:partsflow_mobile/core/providers/storage_providers.dart';
+import 'package:partsflow_mobile/core/storage/storage_keys.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
@@ -11,11 +13,17 @@ import 'package:partsflow_mobile/features/chat/data/repositories/chat_repository
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_query.dart';
 import 'package:partsflow_mobile/features/chat/domain/repositories/chat_repository.dart';
+import 'package:partsflow_mobile/features/chat/presentation/providers/chat_search_provider.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 part 'chat_providers.g.dart';
 
 const chatPageSize = 50;
+
+/// Umbral local de Pendientes (minutos sin actividad): rango y valor por defecto.
+const pendingThresholdMin = 1;
+const pendingThresholdMax = 20;
+const pendingThresholdDefault = 5;
 
 @Riverpod(keepAlive: true)
 ChatRepository chatRepository(Ref ref) =>
@@ -49,6 +57,8 @@ class ChatListState {
     this.searchText = '',
     this.searchMode = SearchMode.all,
     this.filters = const ChatFilters(),
+    this.advanced = const AdvancedFilters(),
+    this.pendingThreshold = pendingThresholdDefault,
     this.items = const [],
     this.hasMore = false,
     this.cursor,
@@ -63,6 +73,8 @@ class ChatListState {
   final String searchText;
   final SearchMode searchMode;
   final ChatFilters filters;
+  final AdvancedFilters advanced;
+  final int pendingThreshold;
   final List<Chat> items;
   final bool hasMore;
   final String? cursor;
@@ -72,14 +84,46 @@ class ChatListState {
   final bool loadingMore;
   final String? error;
 
-  List<Chat> get visible =>
-      filters.isActive ? items.where(filters.matches).toList() : items;
+  /// Búsqueda "Todo" con texto: la lista normal se reemplaza por las secciones
+  /// Clientes y Mensajes (ver [ChatSearchController]).
+  bool get isGlobalSearch =>
+      searchText.isNotEmpty && searchMode == SearchMode.all;
+
+  /// Filtros que se aplican en el dispositivo (subfiltros + umbral de Pendientes).
+  bool get thresholdApplies => tab == ChatTab.pending && searchText.isEmpty;
+
+  /// ¿Algo se oculta en el dispositivo? (subfiltros o umbral de Pendientes)
+  bool get hidesLocally => filters.isActive || thresholdApplies;
+
+  /// Nº de filtros activos para el botón: locales + avanzados + modo de búsqueda.
+  int get activeFilterCount =>
+      (filters.unread ? 1 : 0) +
+      (filters.unanswered ? 1 : 0) +
+      (filters.julia ? 1 : 0) +
+      (filters.unassigned ? 1 : 0) +
+      advanced.count +
+      (searchMode != SearchMode.all ? 1 : 0);
+
+  List<Chat> get visible {
+    final now = DateTime.now();
+    final limit = Duration(minutes: pendingThreshold);
+    return items.where((c) {
+      if (filters.isActive && !filters.matches(c)) return false;
+      if (thresholdApplies) {
+        final at = c.activityAt;
+        if (at != null && now.difference(at) <= limit) return false;
+      }
+      return true;
+    }).toList();
+  }
 
   ChatListState copyWith({
     ChatTab? tab,
     String? searchText,
     SearchMode? searchMode,
     ChatFilters? filters,
+    AdvancedFilters? advanced,
+    int? pendingThreshold,
     List<Chat>? items,
     bool? hasMore,
     String? cursor,
@@ -95,6 +139,8 @@ class ChatListState {
     searchText: searchText ?? this.searchText,
     searchMode: searchMode ?? this.searchMode,
     filters: filters ?? this.filters,
+    advanced: advanced ?? this.advanced,
+    pendingThreshold: pendingThreshold ?? this.pendingThreshold,
     items: items ?? this.items,
     hasMore: hasMore ?? this.hasMore,
     cursor: clearCursor ? null : (cursor ?? this.cursor),
@@ -130,7 +176,32 @@ class ChatListController extends _$ChatListController {
     Future.microtask(() {
       if (ref.mounted) _loadFirst();
     });
+    _loadThreshold();
     return const ChatListState();
+  }
+
+  Future<void> _loadThreshold() async {
+    final storage = await ref.read(localStorageProvider.future);
+    final v = await storage.getInt(StorageKeys.pendingThresholdMin);
+    if (!ref.mounted || v == null) return;
+    state = state.copyWith(
+      pendingThreshold: v.clamp(pendingThresholdMin, pendingThresholdMax),
+    );
+  }
+
+  Future<void> setPendingThreshold(int minutes) async {
+    final v = minutes.clamp(pendingThresholdMin, pendingThresholdMax);
+    if (v == state.pendingThreshold) return;
+    state = state.copyWith(pendingThreshold: v);
+    final storage = await ref.read(localStorageProvider.future);
+    await storage.setInt(StorageKeys.pendingThresholdMin, v);
+  }
+
+  /// Cambia los filtros avanzados (se mandan a la API) y recarga si cambiaron.
+  void setAdvanced(AdvancedFilters a) {
+    if (a == state.advanced) return;
+    state = state.copyWith(advanced: a);
+    _loadFirst();
   }
 
   Future<String?> _loadFirst({bool skeleton = true, bool merge = false}) async {
@@ -161,11 +232,32 @@ class ChatListController extends _$ChatListController {
         return state.error;
       }
     }
+    final search = ref.read(chatSearchControllerProvider.notifier);
+    if (s.isGlobalSearch) {
+      state = state.copyWith(
+        status: ListStatus.data,
+        items: const [],
+        hasMore: false,
+        clearCursor: true,
+        pagesLoaded: 0,
+        loadingMore: false,
+        clearError: true,
+      );
+      await search.run(
+        text: s.searchText,
+        tab: s.tab,
+        advanced: s.advanced,
+        userId: userId,
+      );
+      return null;
+    }
+    search.clear();
     final result = await ref
         .read(chatRepositoryProvider)
         .searchChats(
           ChatQuery(
             tab: s.tab,
+            advanced: s.advanced,
             userId: userId,
             searchText: s.searchText,
             searchMode: s.searchMode,
@@ -217,6 +309,8 @@ class ChatListController extends _$ChatListController {
   /// Sondeo / refresco tras una acción: primera página mezclada con lo ya cargado.
   Future<void> poll() async {
     if (state.status != ListStatus.data || state.loadingMore) return;
+    // Los resultados de búsqueda no se sondean.
+    if (state.isGlobalSearch) return;
     await _loadFirst(skeleton: false, merge: true);
   }
 
@@ -255,6 +349,7 @@ class ChatListController extends _$ChatListController {
         .searchChats(
           ChatQuery(
             tab: s.tab,
+            advanced: s.advanced,
             userId: userId,
             searchText: s.searchText,
             searchMode: s.searchMode,

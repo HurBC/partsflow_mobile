@@ -55,7 +55,7 @@ extension FailurePatterns on Failure {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( ValidationFormFailure value)?  validationForms,TResult Function( NetworkFailure value)?  network,TResult Function( ServerFailure value)?  server,TResult Function( UnauthorizatedFailure value)?  unauthorization,TResult Function( UnknownFailure value)?  unknown,TResult Function( InvalidCredentialsFailure value)?  invalidCredentials,TResult Function( TemporaryPasswordExpiredFailure value)?  temporaryPasswordExpired,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( ValidationFormFailure value)?  validationForms,TResult Function( NetworkFailure value)?  network,TResult Function( ServerFailure value)?  server,TResult Function( UnauthorizatedFailure value)?  unauthorization,TResult Function( UnknownFailure value)?  unknown,TResult Function( HttpFailure value)?  http,TResult Function( InvalidCredentialsFailure value)?  invalidCredentials,TResult Function( TemporaryPasswordExpiredFailure value)?  temporaryPasswordExpired,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case ValidationFormFailure() when validationForms != null:
@@ -63,7 +63,8 @@ return validationForms(_that);case NetworkFailure() when network != null:
 return network(_that);case ServerFailure() when server != null:
 return server(_that);case UnauthorizatedFailure() when unauthorization != null:
 return unauthorization(_that);case UnknownFailure() when unknown != null:
-return unknown(_that);case InvalidCredentialsFailure() when invalidCredentials != null:
+return unknown(_that);case HttpFailure() when http != null:
+return http(_that);case InvalidCredentialsFailure() when invalidCredentials != null:
 return invalidCredentials(_that);case TemporaryPasswordExpiredFailure() when temporaryPasswordExpired != null:
 return temporaryPasswordExpired(_that);case _:
   return orElse();
@@ -83,7 +84,7 @@ return temporaryPasswordExpired(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( ValidationFormFailure value)  validationForms,required TResult Function( NetworkFailure value)  network,required TResult Function( ServerFailure value)  server,required TResult Function( UnauthorizatedFailure value)  unauthorization,required TResult Function( UnknownFailure value)  unknown,required TResult Function( InvalidCredentialsFailure value)  invalidCredentials,required TResult Function( TemporaryPasswordExpiredFailure value)  temporaryPasswordExpired,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( ValidationFormFailure value)  validationForms,required TResult Function( NetworkFailure value)  network,required TResult Function( ServerFailure value)  server,required TResult Function( UnauthorizatedFailure value)  unauthorization,required TResult Function( UnknownFailure value)  unknown,required TResult Function( HttpFailure value)  http,required TResult Function( InvalidCredentialsFailure value)  invalidCredentials,required TResult Function( TemporaryPasswordExpiredFailure value)  temporaryPasswordExpired,}){
 final _that = this;
 switch (_that) {
 case ValidationFormFailure():
@@ -91,7 +92,8 @@ return validationForms(_that);case NetworkFailure():
 return network(_that);case ServerFailure():
 return server(_that);case UnauthorizatedFailure():
 return unauthorization(_that);case UnknownFailure():
-return unknown(_that);case InvalidCredentialsFailure():
+return unknown(_that);case HttpFailure():
+return http(_that);case InvalidCredentialsFailure():
 return invalidCredentials(_that);case TemporaryPasswordExpiredFailure():
 return temporaryPasswordExpired(_that);}
 }
@@ -107,7 +109,7 @@ return temporaryPasswordExpired(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( ValidationFormFailure value)?  validationForms,TResult? Function( NetworkFailure value)?  network,TResult? Function( ServerFailure value)?  server,TResult? Function( UnauthorizatedFailure value)?  unauthorization,TResult? Function( UnknownFailure value)?  unknown,TResult? Function( InvalidCredentialsFailure value)?  invalidCredentials,TResult? Function( TemporaryPasswordExpiredFailure value)?  temporaryPasswordExpired,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( ValidationFormFailure value)?  validationForms,TResult? Function( NetworkFailure value)?  network,TResult? Function( ServerFailure value)?  server,TResult? Function( UnauthorizatedFailure value)?  unauthorization,TResult? Function( UnknownFailure value)?  unknown,TResult? Function( HttpFailure value)?  http,TResult? Function( InvalidCredentialsFailure value)?  invalidCredentials,TResult? Function( TemporaryPasswordExpiredFailure value)?  temporaryPasswordExpired,}){
 final _that = this;
 switch (_that) {
 case ValidationFormFailure() when validationForms != null:
@@ -115,7 +117,8 @@ return validationForms(_that);case NetworkFailure() when network != null:
 return network(_that);case ServerFailure() when server != null:
 return server(_that);case UnauthorizatedFailure() when unauthorization != null:
 return unauthorization(_that);case UnknownFailure() when unknown != null:
-return unknown(_that);case InvalidCredentialsFailure() when invalidCredentials != null:
+return unknown(_that);case HttpFailure() when http != null:
+return http(_that);case InvalidCredentialsFailure() when invalidCredentials != null:
 return invalidCredentials(_that);case TemporaryPasswordExpiredFailure() when temporaryPasswordExpired != null:
 return temporaryPasswordExpired(_that);case _:
   return null;
@@ -134,14 +137,15 @@ return temporaryPasswordExpired(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( Map<String, List<String>> fields)?  validationForms,TResult Function()?  network,TResult Function()?  server,TResult Function()?  unauthorization,TResult Function()?  unknown,TResult Function()?  invalidCredentials,TResult Function()?  temporaryPasswordExpired,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( Map<String, List<String>> fields)?  validationForms,TResult Function()?  network,TResult Function()?  server,TResult Function()?  unauthorization,TResult Function()?  unknown,TResult Function( int? status,  String reason)?  http,TResult Function()?  invalidCredentials,TResult Function()?  temporaryPasswordExpired,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case ValidationFormFailure() when validationForms != null:
 return validationForms(_that.fields);case NetworkFailure() when network != null:
 return network();case ServerFailure() when server != null:
 return server();case UnauthorizatedFailure() when unauthorization != null:
 return unauthorization();case UnknownFailure() when unknown != null:
-return unknown();case InvalidCredentialsFailure() when invalidCredentials != null:
+return unknown();case HttpFailure() when http != null:
+return http(_that.status,_that.reason);case InvalidCredentialsFailure() when invalidCredentials != null:
 return invalidCredentials();case TemporaryPasswordExpiredFailure() when temporaryPasswordExpired != null:
 return temporaryPasswordExpired();case _:
   return orElse();
@@ -161,14 +165,15 @@ return temporaryPasswordExpired();case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( Map<String, List<String>> fields)  validationForms,required TResult Function()  network,required TResult Function()  server,required TResult Function()  unauthorization,required TResult Function()  unknown,required TResult Function()  invalidCredentials,required TResult Function()  temporaryPasswordExpired,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( Map<String, List<String>> fields)  validationForms,required TResult Function()  network,required TResult Function()  server,required TResult Function()  unauthorization,required TResult Function()  unknown,required TResult Function( int? status,  String reason)  http,required TResult Function()  invalidCredentials,required TResult Function()  temporaryPasswordExpired,}) {final _that = this;
 switch (_that) {
 case ValidationFormFailure():
 return validationForms(_that.fields);case NetworkFailure():
 return network();case ServerFailure():
 return server();case UnauthorizatedFailure():
 return unauthorization();case UnknownFailure():
-return unknown();case InvalidCredentialsFailure():
+return unknown();case HttpFailure():
+return http(_that.status,_that.reason);case InvalidCredentialsFailure():
 return invalidCredentials();case TemporaryPasswordExpiredFailure():
 return temporaryPasswordExpired();}
 }
@@ -184,14 +189,15 @@ return temporaryPasswordExpired();}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( Map<String, List<String>> fields)?  validationForms,TResult? Function()?  network,TResult? Function()?  server,TResult? Function()?  unauthorization,TResult? Function()?  unknown,TResult? Function()?  invalidCredentials,TResult? Function()?  temporaryPasswordExpired,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( Map<String, List<String>> fields)?  validationForms,TResult? Function()?  network,TResult? Function()?  server,TResult? Function()?  unauthorization,TResult? Function()?  unknown,TResult? Function( int? status,  String reason)?  http,TResult? Function()?  invalidCredentials,TResult? Function()?  temporaryPasswordExpired,}) {final _that = this;
 switch (_that) {
 case ValidationFormFailure() when validationForms != null:
 return validationForms(_that.fields);case NetworkFailure() when network != null:
 return network();case ServerFailure() when server != null:
 return server();case UnauthorizatedFailure() when unauthorization != null:
 return unauthorization();case UnknownFailure() when unknown != null:
-return unknown();case InvalidCredentialsFailure() when invalidCredentials != null:
+return unknown();case HttpFailure() when http != null:
+return http(_that.status,_that.reason);case InvalidCredentialsFailure() when invalidCredentials != null:
 return invalidCredentials();case TemporaryPasswordExpiredFailure() when temporaryPasswordExpired != null:
 return temporaryPasswordExpired();case _:
   return null;
@@ -400,6 +406,74 @@ String toString() {
 
 
 
+
+/// @nodoc
+
+
+class HttpFailure implements Failure {
+   HttpFailure(this.status, this.reason);
+  
+
+ final  int? status;
+ final  String reason;
+
+/// Create a copy of Failure
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$HttpFailureCopyWith<HttpFailure> get copyWith => _$HttpFailureCopyWithImpl<HttpFailure>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is HttpFailure&&(identical(other.status, status) || other.status == status)&&(identical(other.reason, reason) || other.reason == reason));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,status,reason);
+
+@override
+String toString() {
+  return 'Failure.http(status: $status, reason: $reason)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $HttpFailureCopyWith<$Res> implements $FailureCopyWith<$Res> {
+  factory $HttpFailureCopyWith(HttpFailure value, $Res Function(HttpFailure) _then) = _$HttpFailureCopyWithImpl;
+@useResult
+$Res call({
+ int? status, String reason
+});
+
+
+
+
+}
+/// @nodoc
+class _$HttpFailureCopyWithImpl<$Res>
+    implements $HttpFailureCopyWith<$Res> {
+  _$HttpFailureCopyWithImpl(this._self, this._then);
+
+  final HttpFailure _self;
+  final $Res Function(HttpFailure) _then;
+
+/// Create a copy of Failure
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? status = freezed,Object? reason = null,}) {
+  return _then(HttpFailure(
+freezed == status ? _self.status : status // ignore: cast_nullable_to_non_nullable
+as int?,null == reason ? _self.reason : reason // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+
+}
 
 /// @nodoc
 

@@ -10,6 +10,9 @@ sealed class Failure with _$Failure {
   factory Failure.server() = ServerFailure;
   factory Failure.unauthorization() = UnauthorizatedFailure;
   factory Failure.unknown() = UnknownFailure;
+
+  /// Error con motivo legible (p. ej. "HTTP 400: detalle") para mostrar en la UI.
+  factory Failure.http(int? status, String reason) = HttpFailure;
   factory Failure.invalidCredentials() = InvalidCredentialsFailure;
   factory Failure.temporaryPasswordExpired() = TemporaryPasswordExpiredFailure;
 }

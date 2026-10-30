@@ -1,6 +1,9 @@
 import 'dart:typed_data';
 
+import 'dart:io';
+
 import 'package:dio/dio.dart';
+import 'package:partsflow_mobile/core/utils/pf_log.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachment.dart';
 
 /// Llamadas HTTP crudas a SAPI; devuelve el JSON sin interpretar.
@@ -13,6 +16,9 @@ class ChatRemoteDataSource {
   Future<Object?> searchChats(Map<String, dynamic> params) async =>
       (await _dio.get<Object?>('chat/search/', queryParameters: params)).data;
 
+  Future<Object?> clientStatuses() async =>
+      (await _dio.get<Object?>('clients/statuses/')).data;
+
   Future<Object?> history(String phone, int page, int limit) async =>
       (await _dio.get<Object?>(
         'chat/message_history/',
@@ -21,7 +27,20 @@ class ChatRemoteDataSource {
 
   /// Devuelve (statusCode, body).
   Future<(int, Object?)> sendMessage(Map<String, Object?> body) async {
+    if (pfDebugLog) {
+      // Sin datos personales: teléfono enmascarado y el texto solo como largo.
+      final safe = <String, Object?>{
+        for (final e in body.entries)
+          e.key: switch (e.key) {
+            'phone' || 'chat_id' => maskPhoneForLog(e.value?.toString()),
+            'message' => '<${e.value?.toString().length ?? 0} chars>',
+            _ => e.value,
+          },
+      };
+      pfLog('send_message → $safe');
+    }
     final r = await _dio.post<Object?>('chat/send_message/', data: body);
+    pfLog('send_message ← status=${r.statusCode} body=${truncateLog(r.data)}');
     return (r.statusCode ?? 0, r.data);
   }
 
@@ -68,15 +87,31 @@ class ChatRemoteDataSource {
     required String phone,
     void Function(int sent, int total)? onProgress,
   }) async {
+    if (pfDebugLog) {
+      var bytes = -1;
+      try {
+        bytes = await File(path).length();
+      } catch (_) {}
+      pfLog(
+        'upload → file=$name mime=$mime bytes=$bytes '
+        'phone=${maskPhoneForLog(phone)}',
+      );
+    }
     final form = FormData.fromMap({
-      'file': await MultipartFile.fromFile(path, filename: name),
+      // SAPI reenvía a Wali el content-type de esta parte (no el campo `type`);
+      // sin él llega como octet-stream y Wali no trata el audio como audio.
+      'file': await MultipartFile.fromFile(
+        path,
+        filename: name,
+        contentType: DioMediaType.parse(mime),
+      ),
       'filename': name,
       'permission': 'public',
       'type': mime,
       'format': 'native',
       'phone': phone,
     });
-    return (await _dio.post<Object?>(
+    final res = await _dio.post<Object?>(
       'chat/files/upload/',
       data: form,
       onSendProgress: onProgress,
@@ -85,7 +120,9 @@ class ChatRemoteDataSource {
         sendTimeout: _long,
         receiveTimeout: _long,
       ),
-    )).data;
+    );
+    pfLog('upload ← status=${res.statusCode} body=${truncateLog(res.data)}');
+    return res.data;
   }
 
   static String _kindPath(RemoteMediaKind k) => switch (k) {

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:partsflow_mobile/core/providers/storage_providers.dart';
 import 'package:partsflow_mobile/core/router/app_routes.dart';
+import 'package:partsflow_mobile/core/storage/storage_keys.dart';
 import 'package:partsflow_mobile/core/theme/app_theme.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
@@ -35,6 +37,21 @@ class _LoginViewState extends ConsumerState<_LoginView> {
   bool _loading = false;
   bool _submitted = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _showSessionExpiredNotice();
+  }
+
+  Future<void> _showSessionExpiredNotice() async {
+    final storage = ref.read(secureStorageProvider);
+    final flag = await storage.read(StorageKeys.sessionExpired);
+    if (flag == null) return;
+    await storage.delete(StorageKeys.sessionExpired);
+    if (!mounted) return;
+    setState(() => _error = 'Tu sesión expiró, vuelve a ingresar');
+  }
 
   @override
   void dispose() {
