@@ -11,6 +11,7 @@ import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachment.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/media_files.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/video_player_page.dart';
 
 void _snack(BuildContext context, String text) {
   ScaffoldMessenger.of(context)
@@ -317,7 +318,10 @@ class _VideoMessageViewState extends ConsumerState<VideoMessageView> {
     final m = widget.message;
     if (m.mediaId == null) {
       final url = m.mediaUrl;
-      if (url != null && await openExternal(Uri.parse(url))) return;
+      if (url != null) {
+        await showVideoPlayer(context, uri: Uri.parse(url));
+        return;
+      }
       if (mounted) _snack(context, 'No se pudo abrir el video');
       return;
     }
@@ -332,8 +336,7 @@ class _VideoMessageViewState extends ConsumerState<VideoMessageView> {
     if (!mounted) return;
     setState(() => _busy = false);
     if (res.file == null) return _snack(context, res.error!);
-    final ok = await openLocalFile(res.file!.path, mime: mime);
-    if (!ok && mounted) _snack(context, 'No hay una app para abrir este video');
+    await showVideoPlayer(context, file: res.file, mime: mime);
   }
 
   @override
@@ -343,7 +346,7 @@ class _VideoMessageViewState extends ConsumerState<VideoMessageView> {
     final dur = _preview?.durationSeconds;
     return Semantics(
       button: true,
-      label: 'Video. Toca para abrir',
+      label: 'Video. Toca para reproducir',
       child: ExcludeSemantics(
         child: GestureDetector(
           onTap: _open,

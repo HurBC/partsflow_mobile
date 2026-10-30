@@ -19,6 +19,17 @@ ChatLastMessage? _lastMessage(Object? json) {
   );
 }
 
+ChatReference? _reference(Object? json) {
+  final m = asMap(json);
+  if (m == null) return null;
+  return ChatReference(
+    id: asStr(m['id']),
+    text: nonEmpty(asStr(m['message'])) ?? nonEmpty(asStr(m['body'])),
+    date: asDate(m['date']),
+    flow: asStr(m['flow']),
+  );
+}
+
 ChatClient? _client(Object? json) {
   final m = asMap(json);
   if (m == null) return null;
@@ -71,6 +82,7 @@ Chat? chatFromJson(Object? json) {
       lastMessageAt: asDate(m['lastMessageAt']),
       lastInboundMessageAt: asDate(m['lastInboundMessageAt']),
       lastMessage: _lastMessage(m['lastMessage']),
+      referenceMessage: _reference(m['referenceMessage']),
       unreadCount: asInt(meta?['unreadCount']) ?? 0,
       isUnread: asBool(meta?['isUnread']) ?? false,
       client: _client(m['client']),
@@ -169,6 +181,9 @@ Message? messageFromJson(Object? json) {
       mediaId: mediaId,
       mediaMime: mediaMime,
       websocketId: nonEmpty(asStr(m['websocket_id'])),
+      errorCode: asInt(m['error_code']),
+      isEdited:
+          (asBool(m['is_edited']) ?? false) || asStr(m['status']) == 'edited',
     );
   } catch (_) {
     return null;

@@ -13,6 +13,9 @@ import 'package:partsflow_mobile/features/chat/domain/entities/send_outcome.dart
 abstract class ChatRepository {
   Future<Result<ChatPage>> searchChats(ChatQuery query);
 
+  /// Estados de cliente de la sucursal (`clients/statuses/`).
+  Future<Result<List<String>>> clientStatuses();
+
   /// `page` es el número de página (0 = la más reciente), no un offset de ítems.
   Future<Result<List<Message>>> history(String phone, int page, int limit);
 

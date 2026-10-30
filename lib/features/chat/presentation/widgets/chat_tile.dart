@@ -34,6 +34,9 @@ class ChatTile extends StatelessWidget {
       label: [
         name,
         if (unread) unreadLabel,
+        if (chat.client?.isImportant ?? false) 'Cliente importante',
+        if ((chat.client?.tags ?? const <ChatTag>[]).isNotEmpty)
+          'Etiquetas: ${chat.client!.tags.take(2).map((t) => t.name).join(', ')}',
         if (julia) 'Julia atendiendo',
         if (chat.hasPendingReminder) 'Recordatorio pendiente',
         if (preview.isNotEmpty) preview,
@@ -71,6 +74,14 @@ class ChatTile extends StatelessWidget {
                               ),
                             ),
                           ),
+                          if (chat.client?.isImportant ?? false) ...[
+                            const SizedBox(width: 6),
+                            Icon(Icons.star, size: 16, color: pf.warnFg),
+                          ],
+                          for (final t
+                              in (chat.client?.tags ?? const <ChatTag>[]).take(
+                                2,
+                              )) ...[const SizedBox(width: 6), _TagChip(t)],
                           if (chat.hasPendingReminder) ...[
                             const SizedBox(width: 6),
                             Semantics(
@@ -177,6 +188,61 @@ class ChatTile extends StatelessWidget {
       }
     }
     return out;
+  }
+}
+
+class _TagChip extends StatelessWidget {
+  const _TagChip(this.tag);
+
+  final ChatTag tag;
+
+  Color? get _dot {
+    final c = tag.color?.replaceFirst('#', '');
+    if (c == null || (c.length != 6 && c.length != 8)) return null;
+    final v = int.tryParse(c, radix: 16);
+    if (v == null) return null;
+    return Color(c.length == 6 ? 0xFF000000 | v : v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pf = PfColors.of(context);
+    final dot = _dot;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 76),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+        decoration: BoxDecoration(
+          color: pf.indicator,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (dot != null) ...[
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 4),
+            ],
+            Flexible(
+              child: Text(
+                tag.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: pf.textMid,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

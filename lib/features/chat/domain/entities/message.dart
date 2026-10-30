@@ -39,6 +39,8 @@ class Message {
     this.isLocal = false,
     this.errorText,
     this.websocketId,
+    this.errorCode,
+    this.isEdited = false,
   });
 
   final String id;
@@ -87,6 +89,15 @@ class Message {
   /// Id que Wali usa en los eventos de estado por WebSocket.
   final String? websocketId;
 
+  /// `error_code` de Meta cuando el envío falló en el servidor (ver send_errors).
+  final int? errorCode;
+
+  /// `is_edited` o `status == 'edited'`.
+  final bool isEdited;
+
+  /// Eliminado/revocado (`status` removed | revoked): se muestra como "Mensaje eliminado".
+  bool get isDeleted => status == 'removed' || status == 'revoked';
+
   /// Id a usar como `quote` y como `message_id` de previews (fallback a [id]).
   String get replyId => messageId ?? id;
 
@@ -98,7 +109,8 @@ class Message {
   String get quoteBody =>
       (text != null && text!.trim().isNotEmpty) ? text! : type;
 
-  bool get hasError => status == 'error' || errorText != null;
+  bool get hasError =>
+      status == 'error' || errorText != null || errorCode != null;
 
   /// `myUserId`: id de SAPI del usuario actual (para distinguir "mis" mensajes).
   MessageAuthor author(String? myUserId) {
@@ -160,5 +172,7 @@ class Message {
     isLocal: isLocal,
     errorText: clearError ? null : (errorText ?? this.errorText),
     websocketId: websocketId,
+    errorCode: errorCode,
+    isEdited: isEdited,
   );
 }

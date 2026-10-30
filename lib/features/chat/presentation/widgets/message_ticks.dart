@@ -38,10 +38,18 @@ class MessageTicks extends StatelessWidget {
       _ => (null, color),
     };
     if (icon == null) return const SizedBox.shrink();
+    final reduce = MediaQuery.disableAnimationsOf(context);
     return Semantics(
       label: labelFor(status),
       child: ExcludeSemantics(
-        child: Icon(icon, size: size, color: c),
+        child: AnimatedSwitcher(
+          duration: reduce ? Duration.zero : const Duration(milliseconds: 200),
+          transitionBuilder: (child, a) => ScaleTransition(
+            scale: a,
+            child: FadeTransition(opacity: a, child: child),
+          ),
+          child: Icon(icon, key: ValueKey(status), size: size, color: c),
+        ),
       ),
     );
   }

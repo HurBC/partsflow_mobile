@@ -35,6 +35,20 @@ class ChatLastMessage {
   bool get isOutbound => flow == 'outbound';
 }
 
+/// Mensaje que coincidió en una búsqueda de texto libre (`referenceMessage`).
+class ChatReference {
+  const ChatReference({this.id, this.text, this.date, this.flow});
+
+  final String? id;
+  final String? text;
+  final DateTime? date;
+
+  /// 'inbound' | 'outbound'
+  final String? flow;
+
+  bool get isOutbound => flow == 'outbound';
+}
+
 class ChatClient {
   const ChatClient({
     this.id,
@@ -76,6 +90,7 @@ class ChatClient {
     bool clearResponsible = false,
     int? issuesCount,
     List<ChatTag>? tags,
+    bool? isImportant,
   }) => ChatClient(
     id: id,
     name: name,
@@ -83,7 +98,7 @@ class ChatClient {
     isChatResolved: isChatResolved ?? this.isChatResolved,
     operationMode: operationMode ?? this.operationMode,
     isAiActive: isAiActive ?? this.isAiActive,
-    isImportant: isImportant,
+    isImportant: isImportant ?? this.isImportant,
     status: status,
     responsible: clearResponsible ? null : (responsible ?? this.responsible),
     issuesCount: issuesCount ?? this.issuesCount,
@@ -101,6 +116,7 @@ class Chat {
     this.lastMessageAt,
     this.lastInboundMessageAt,
     this.lastMessage,
+    this.referenceMessage,
     this.unreadCount = 0,
     this.isUnread = false,
     this.client,
@@ -118,6 +134,9 @@ class Chat {
   final DateTime? lastMessageAt;
   final DateTime? lastInboundMessageAt;
   final ChatLastMessage? lastMessage;
+
+  /// Solo en resultados de búsqueda por texto libre.
+  final ChatReference? referenceMessage;
   final int unreadCount;
   final bool isUnread;
   final ChatClient? client;
@@ -144,6 +163,7 @@ class Chat {
     lastMessageAt: lastMessageAt,
     lastInboundMessageAt: lastInboundMessageAt,
     lastMessage: lastMessage,
+    referenceMessage: referenceMessage,
     unreadCount: unreadCount ?? this.unreadCount,
     isUnread: isUnread ?? this.isUnread,
     client: client ?? this.client,
