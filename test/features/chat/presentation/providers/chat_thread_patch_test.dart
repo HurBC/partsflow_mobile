@@ -117,6 +117,55 @@ void main() {
     expect(c.read(chatThreadProvider(ChatKey(theChat))).messages, hasLength(1));
   });
 
+  test('message_update reemplaza el mensaje pendiente sin recargar', () async {
+    _FakeRealtime.ctrl.add(
+      RealtimeNewMessages([
+        item({
+          'message_id': 'm2',
+          'type': 'image',
+          'media': {'id': 'x', 'pending': true},
+        }),
+      ]),
+    );
+    await settle(50);
+    final k = ChatKey(theChat);
+    expect(c.read(chatThreadProvider(k)).messages.last.mediaPending, isTrue);
+    _FakeRealtime.ctrl.add(
+      RealtimeMessageUpdates([
+        item({
+          'message_id': 'm2',
+          'type': 'image',
+          'media': {'id': 'x', 'url': 'http://u', 'pending': false},
+        }),
+      ]),
+    );
+    await settle(50);
+    final last = c.read(chatThreadProvider(k)).messages.last;
+    expect(last.mediaPending, isFalse);
+    expect(last.mediaUrl, 'http://u');
+    expect(repo.historyCalls, 1);
+  });
+
+  test('media pendiente mas de N s dispara una sola recarga', () async {
+    ChatThread.mediaPendingTimeout = const Duration(milliseconds: 100);
+    addTearDown(
+      () => ChatThread.mediaPendingTimeout = const Duration(seconds: 10),
+    );
+    _FakeRealtime.ctrl.add(
+      RealtimeNewMessages([
+        item({
+          'message_id': 'm2',
+          'type': 'image',
+          'media': {'id': 'x', 'pending': true},
+        }),
+      ]),
+    );
+    await settle(700);
+    expect(repo.historyCalls, 2);
+    await settle(700);
+    expect(repo.historyCalls, 2);
+  });
+
   test('dos snapshots del mismo chat comparten un único notifier', () {
     final a = ChatKey(theChat);
     final b = ChatKey(chat('56911111111@c.us', unreadCount: 7));
