@@ -1,3 +1,5 @@
+import 'package:collection/collection.dart';
+
 /// Etapas del pedido que muestra la app (las mismas del Kanban del Backoffice).
 enum OrderStage {
   porCotizar(
@@ -61,6 +63,14 @@ class OrderProduct {
 
   final String name;
   final int quantity;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OrderProduct && other.name == name && other.quantity == quantity;
+
+  @override
+  int get hashCode => Object.hashAll([name, quantity]);
 }
 
 class OrderSummary {
@@ -173,6 +183,47 @@ class OrderSummary {
     products: products ?? this.products,
     cancelReason: cancelReason,
   );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OrderSummary &&
+          other.id == id &&
+          other.status == status &&
+          other.source == source &&
+          other.createdAt == createdAt &&
+          other.ticket == ticket &&
+          other.responsibleName == responsibleName &&
+          other.clientId == clientId &&
+          other.clientName == clientName &&
+          other.clientPhone == clientPhone &&
+          other.clientEmail == clientEmail &&
+          other.clientPhotoUrl == clientPhotoUrl &&
+          other.clientLastMessageAt == clientLastMessageAt &&
+          other.carName == carName &&
+          other.plate == plate &&
+          const DeepCollectionEquality().equals(other.products, products) &&
+          other.cancelReason == cancelReason;
+
+  @override
+  int get hashCode => Object.hashAll([
+    id,
+    status,
+    source,
+    createdAt,
+    ticket,
+    responsibleName,
+    clientId,
+    clientName,
+    clientPhone,
+    clientEmail,
+    clientPhotoUrl,
+    clientLastMessageAt,
+    carName,
+    plate,
+    const DeepCollectionEquality().hash(products),
+    cancelReason,
+  ]);
 }
 
 /// Línea de la cotización (`quotations/summary/`).

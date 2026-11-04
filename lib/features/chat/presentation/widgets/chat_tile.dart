@@ -5,6 +5,10 @@ import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.da
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_common.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/message_ticks.dart';
 
+/// Solo para tests: se invoca en cada build de un [ChatTile] con el id del chat.
+@visibleForTesting
+void Function(String chatId)? chatTileBuildProbe;
+
 class ChatTile extends StatelessWidget {
   const ChatTile({super.key, required this.chat, required this.onTap});
 
@@ -13,6 +17,7 @@ class ChatTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    chatTileBuildProbe?.call(chat.id);
     final pf = PfColors.of(context);
     final theme = Theme.of(context);
     final name = chatDisplayName(chat);

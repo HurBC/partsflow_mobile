@@ -88,7 +88,7 @@ final class OrdersListControllerProvider
 }
 
 String _$ordersListControllerHash() =>
-    r'a7a4ad4b83ba9f52464011db0208106c4f0d9dc6';
+    r'5e6e32693be0855322bcda65904c9255536d4604';
 
 abstract class _$OrdersListController extends $Notifier<OrdersListState> {
   OrdersListState build();

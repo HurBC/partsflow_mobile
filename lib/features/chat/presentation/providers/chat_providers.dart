@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:collection/collection.dart';
 import 'package:partsflow_mobile/core/errors/failure.dart';
 import 'package:partsflow_mobile/core/config/perf_flags.dart';
 import 'package:partsflow_mobile/core/network/dio_client.dart';
@@ -72,6 +73,7 @@ class ChatListState {
     this.pagesLoaded = 0,
     this.status = ListStatus.loading,
     this.loadingMore = false,
+    this.refining = false,
     this.error,
   });
 
@@ -88,6 +90,11 @@ class ChatListState {
   final int pagesLoaded;
   final ListStatus status;
   final bool loadingMore;
+
+  /// Refinamiento (texto / filtros avanzados dentro de la misma pestaña): los
+  /// items actuales siguen visibles con un indicador hasta que llega la
+  /// respuesta (sin skeleton, para no perder el scroll).
+  final bool refining;
   final String? error;
 
   /// Búsqueda "Todo" con texto: la lista normal se reemplaza por las secciones
@@ -110,14 +117,6 @@ class ChatListState {
       advanced.count +
       (searchMode != SearchMode.all ? 1 : 0);
 
-  List<Chat> get visible => visibleChats(
-    items: items,
-    filters: filters,
-    thresholdApplies: thresholdApplies,
-    pendingThreshold: pendingThreshold,
-    now: DateTime.now(),
-  );
-
   ChatListState copyWith({
     ChatTab? tab,
     String? searchText,
@@ -133,6 +132,7 @@ class ChatListState {
     int? pagesLoaded,
     ListStatus? status,
     bool? loadingMore,
+    bool? refining,
     String? error,
     bool clearError = false,
   }) => ChatListState(
@@ -149,8 +149,48 @@ class ChatListState {
     pagesLoaded: pagesLoaded ?? this.pagesLoaded,
     status: status ?? this.status,
     loadingMore: loadingMore ?? this.loadingMore,
+    refining: refining ?? this.refining,
     error: clearError ? null : (error ?? this.error),
   );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ChatListState &&
+          other.tab == tab &&
+          other.searchText == searchText &&
+          other.searchMode == searchMode &&
+          other.filters == filters &&
+          other.advanced == advanced &&
+          other.pendingThreshold == pendingThreshold &&
+          const DeepCollectionEquality().equals(other.items, items) &&
+          other.hasMore == hasMore &&
+          other.cursor == cursor &&
+          other.cursorId == cursorId &&
+          other.pagesLoaded == pagesLoaded &&
+          other.status == status &&
+          other.loadingMore == loadingMore &&
+          other.refining == refining &&
+          other.error == error;
+
+  @override
+  int get hashCode => Object.hashAll([
+    tab,
+    searchText,
+    searchMode,
+    filters,
+    advanced,
+    pendingThreshold,
+    const DeepCollectionEquality().hash(items),
+    hasMore,
+    cursor,
+    cursorId,
+    pagesLoaded,
+    status,
+    loadingMore,
+    refining,
+    error,
+  ]);
 }
 
 @Riverpod(keepAlive: true)
@@ -220,20 +260,39 @@ class ChatListController extends _$ChatListController {
   void setAdvanced(AdvancedFilters a) {
     if (a == state.advanced) return;
     state = state.copyWith(advanced: a);
-    _loadFirst();
+    _loadFirst(refine: true);
   }
 
-  Future<String?> _loadFirst({bool skeleton = true, bool merge = false}) =>
-      _gate.track(() => _doLoadFirst(skeleton: skeleton, merge: merge));
+  Future<String?> _loadFirst({
+    bool skeleton = true,
+    bool merge = false,
+    bool refine = false,
+  }) => _gate.track(
+    () => _doLoadFirst(skeleton: skeleton, merge: merge, refine: refine),
+  );
 
   Future<String?> _doLoadFirst({
     bool skeleton = true,
     bool merge = false,
+    bool refine = false,
   }) async {
     final seq = ++_seq;
     _inFlightEvents.removeWhere((x) => x.seq < seq);
-    if (skeleton) {
+    // Refinar solo tiene sentido con una lista ya cargada de la misma pestaña;
+    // si no, se cae al skeleton de siempre.
+    if (refine && state.status != ListStatus.data) refine = false;
+    if (refine) {
       state = state.copyWith(
+        refining: true,
+        loadingMore: false,
+        clearError: true,
+      );
+    } else if (!skeleton && state.refining) {
+      // Esta carga invalida el refinamiento en vuelo: no debe quedar pegado.
+      state = state.copyWith(refining: false);
+    } else if (skeleton) {
+      state = state.copyWith(
+        refining: false,
         status: ListStatus.loading,
         items: const [],
         hasMore: false,
@@ -252,6 +311,7 @@ class ChatListController extends _$ChatListController {
         // Sin usuario no se puede filtrar por responsable (mostraría todo).
         ref.invalidate(apiUserProvider);
         state = state.copyWith(
+          refining: false,
           status: ListStatus.error,
           error: 'No pudimos identificar tu usuario. Intenta de nuevo.',
         );
@@ -261,6 +321,7 @@ class ChatListController extends _$ChatListController {
     final search = ref.read(chatSearchControllerProvider.notifier);
     if (s.isGlobalSearch) {
       state = state.copyWith(
+        refining: false,
         status: ListStatus.data,
         items: const [],
         hasMore: false,
@@ -315,6 +376,7 @@ class ChatListController extends _$ChatListController {
           items = _patchItems(e, items, state).items ?? items;
         }
         state = state.copyWith(
+          refining: false,
           status: ListStatus.data,
           items: items,
           hasMore: hasMore,
@@ -328,8 +390,14 @@ class ChatListController extends _$ChatListController {
         return null;
       case Err(:final failure):
         final msg = failureMessage(failure);
-        if (skeleton || state.status != ListStatus.data) {
-          state = state.copyWith(status: ListStatus.error, error: msg);
+        if (refine || skeleton || state.status != ListStatus.data) {
+          state = state.copyWith(
+            refining: false,
+            status: ListStatus.error,
+            error: msg,
+          );
+        } else if (state.refining) {
+          state = state.copyWith(refining: false);
         }
         return msg;
     }
@@ -344,7 +412,11 @@ class ChatListController extends _$ChatListController {
   /// Sondeo / refresco tras una acción: primera página mezclada con lo ya cargado.
   /// Explícito (tras una acción del usuario): sin cooldown.
   Future<void> poll() async {
-    if (state.status != ListStatus.data || state.loadingMore) return;
+    if (state.status != ListStatus.data ||
+        state.loadingMore ||
+        state.refining) {
+      return;
+    }
     // Los resultados de búsqueda no se sondean.
     if (state.isGlobalSearch) return;
     await _loadFirst(skeleton: false, merge: true);
@@ -353,7 +425,11 @@ class ChatListController extends _$ChatListController {
   /// Automático (Resync, tick del poller, volver a primer plano): se omite si
   /// hay una carga reciente y reutiliza la que está en vuelo.
   Future<void> autoPoll() async {
-    if (state.status != ListStatus.data || state.loadingMore) return;
+    if (state.status != ListStatus.data ||
+        state.loadingMore ||
+        state.refining) {
+      return;
+    }
     if (state.isGlobalSearch) return;
     await _gate.auto(() => _doLoadFirst(skeleton: false, merge: true));
   }
@@ -375,7 +451,11 @@ class ChatListController extends _$ChatListController {
     return p.needsReload;
   }
 
-  ChatListPatch _patchItems(RealtimeEvent e, List<Chat> items, ChatListState s) {
+  ChatListPatch _patchItems(
+    RealtimeEvent e,
+    List<Chat> items,
+    ChatListState s,
+  ) {
     final searchActive = s.searchText.isNotEmpty;
     final advanced = s.advanced.isActive;
     switch (e) {
@@ -417,7 +497,11 @@ class ChatListController extends _$ChatListController {
       // Búsqueda global: salir de ella (setSearch/setTab/setMode) ya dispara
       // una carga explícita, así que no hace falta pendiente. Estado no-data:
       // la carga inicial/reintento en curso trae datos frescos.
-      if (state.status != ListStatus.data || state.isGlobalSearch) return;
+      if (state.status != ListStatus.data ||
+          state.isGlobalSearch ||
+          state.refining) {
+        return;
+      }
       await _doLoadFirst(skeleton: false, merge: true);
     });
   }
@@ -432,20 +516,25 @@ class ChatListController extends _$ChatListController {
     final t = text.trim();
     if (t == state.searchText) return;
     state = state.copyWith(searchText: t);
-    _loadFirst();
+    _loadFirst(refine: true);
   }
 
   void setMode(SearchMode mode) {
     if (mode == state.searchMode) return;
     state = state.copyWith(searchMode: mode);
-    if (state.searchText.isNotEmpty) _loadFirst();
+    if (state.searchText.isNotEmpty) _loadFirst(refine: true);
   }
 
   void setFilters(ChatFilters f) => state = state.copyWith(filters: f);
 
   Future<void> loadMore() async {
     final s = state;
-    if (!s.hasMore || s.loadingMore || s.status != ListStatus.data) return;
+    if (!s.hasMore ||
+        s.loadingMore ||
+        s.refining ||
+        s.status != ListStatus.data) {
+      return;
+    }
     final seq = _seq;
     state = s.copyWith(loadingMore: true);
     String? userId;

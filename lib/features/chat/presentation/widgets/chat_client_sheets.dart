@@ -5,6 +5,7 @@ import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/chat_key.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_extras.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_thread_controller.dart';
@@ -455,7 +456,7 @@ class _TagsSheetState extends ConsumerState<_TagsSheet> {
         if (_assigned.contains(t.id)) ChatTag(name: t.name, color: t.color),
     ];
     ref
-        .read(chatThreadProvider(widget.chat).notifier)
+        .read(chatThreadProvider(ChatKey(widget.chat)).notifier)
         .applyClientExtras(tags: tags);
   }
 
@@ -618,7 +619,7 @@ class _IssuesSheetState extends ConsumerState<_IssuesSheet> {
   }
 
   void _publish() => ref
-      .read(chatThreadProvider(widget.chat).notifier)
+      .read(chatThreadProvider(ChatKey(widget.chat)).notifier)
       .applyClientExtras(issuesCount: _issues?.length);
 
   Future<void> _create() async {
@@ -872,7 +873,7 @@ class _ReminderSheetState extends ConsumerState<_ReminderSheet> {
     switch (r) {
       case Ok():
         ref
-            .read(chatThreadProvider(widget.chat).notifier)
+            .read(chatThreadProvider(ChatKey(widget.chat)).notifier)
             .applyClientExtras(hasPendingReminder: true);
         final root = ScaffoldMessenger.of(context);
         Navigator.pop(context);

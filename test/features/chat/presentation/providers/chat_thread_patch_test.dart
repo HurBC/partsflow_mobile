@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_event.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/chat_key.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/repositories/chat_repository.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
@@ -64,7 +65,7 @@ void main() {
       ],
     );
     addTearDown(c.dispose);
-    c.listen(chatThreadProvider(theChat), (_, _) {});
+    c.listen(chatThreadProvider(ChatKey(theChat)), (_, _) {});
     await settle(10);
     expect(repo.historyCalls, 1);
   });
@@ -78,7 +79,10 @@ void main() {
     await settle(600);
     expect(repo.historyCalls, 1);
     expect(
-      c.read(chatThreadProvider(theChat)).messages.map((m) => m.messageId),
+      c
+          .read(chatThreadProvider(ChatKey(theChat)))
+          .messages
+          .map((m) => m.messageId),
       [null, 'm2'],
     );
   });
@@ -90,7 +94,7 @@ void main() {
     _FakeRealtime.ctrl.add(e);
     _FakeRealtime.ctrl.add(e);
     await settle(600);
-    expect(c.read(chatThreadProvider(theChat)).messages, hasLength(2));
+    expect(c.read(chatThreadProvider(ChatKey(theChat))).messages, hasLength(2));
   });
 
   test('mensaje sin message_id/websocket_id cae a recarga', () async {
@@ -110,6 +114,22 @@ void main() {
     );
     await settle(600);
     expect(repo.historyCalls, 1);
-    expect(c.read(chatThreadProvider(theChat)).messages, hasLength(1));
+    expect(c.read(chatThreadProvider(ChatKey(theChat))).messages, hasLength(1));
+  });
+
+  test('dos snapshots del mismo chat comparten un único notifier', () {
+    final a = ChatKey(theChat);
+    final b = ChatKey(chat('56911111111@c.us', unreadCount: 7));
+    expect(a, b);
+    expect(a.hashCode, b.hashCode);
+    expect(
+      identical(
+        c.read(chatThreadProvider(a).notifier),
+        c.read(chatThreadProvider(b).notifier),
+      ),
+      isTrue,
+    );
+    expect(repo.historyCalls, 1);
+    expect(ChatKey(chat('otro@c.us')), isNot(a));
   });
 }

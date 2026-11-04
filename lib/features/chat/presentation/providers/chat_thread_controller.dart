@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:collection/collection.dart';
 import 'package:partsflow_mobile/core/config/perf_flags.dart';
 import 'package:partsflow_mobile/core/errors/failure.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_event.dart';
@@ -12,22 +13,19 @@ import 'package:partsflow_mobile/features/auth/domain/entities/api_user.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/data/mappers/chat_mapper.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/chat_key.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message_template.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachment.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/send_outcome.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/thread_note.dart';
 import 'package:partsflow_mobile/features/chat/domain/logic/messages.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
-part 'chat_thread_controller.g.dart';
+export 'package:partsflow_mobile/features/chat/domain/entities/thread_note.dart';
 
-/// Mensaje de sistema local (p. ej. cambios de Julia).
-class ThreadNote {
-  const ThreadNote(this.date, this.text);
-  final DateTime date;
-  final String text;
-}
+part 'chat_thread_controller.g.dart';
 
 class ThreadState {
   const ThreadState({
@@ -98,12 +96,45 @@ class ThreadState {
     }
     return best;
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ThreadState &&
+          other.chat == chat &&
+          const DeepCollectionEquality().equals(other.messages, messages) &&
+          const DeepCollectionEquality().equals(other.pending, pending) &&
+          const DeepCollectionEquality().equals(other.notes, notes) &&
+          other.status == status &&
+          other.error == error &&
+          other.loadingOlder == loadingOlder &&
+          other.hasMoreOlder == hasMoreOlder &&
+          other.nextPage == nextPage &&
+          other.order == order &&
+          other.historyLoaded == historyLoaded &&
+          other.replyTo == replyTo;
+
+  @override
+  int get hashCode => Object.hashAll([
+    chat,
+    const DeepCollectionEquality().hash(messages),
+    const DeepCollectionEquality().hash(pending),
+    const DeepCollectionEquality().hash(notes),
+    status,
+    error,
+    loadingOlder,
+    hasMoreOlder,
+    nextPage,
+    order,
+    historyLoaded,
+    replyTo,
+  ]);
 }
 
 typedef ActionResult = ({bool ok, String message});
 
-/// Conversación de un chat. La clave es el Chat (igualdad por id): la primera
-/// instancia se crea con el Chat recibido por `extra` desde la lista.
+/// Conversación de un chat. La clave es un ChatKey (igualdad por id): la primera
+/// instancia se crea con el snapshot recibido por `extra` desde la lista.
 @riverpod
 class ChatThread extends _$ChatThread {
   int _localSeq = 0;
@@ -111,7 +142,8 @@ class ChatThread extends _$ChatThread {
   late ReloadGate _reloadGate;
 
   @override
-  ThreadState build(Chat chat) {
+  ThreadState build(ChatKey key) {
+    final chat = key.initial;
     // Un gate por build (la instancia del Notifier puede reutilizarse).
     final gate = _reloadGate = ReloadGate(
       signalGap: const Duration(milliseconds: 400),

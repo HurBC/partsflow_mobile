@@ -12,11 +12,13 @@ import 'package:partsflow_mobile/core/utils/foreground_poller.dart';
 import 'package:partsflow_mobile/core/utils/pf_log.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/chat_key.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/send_outcome.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/open_chat_provider.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_thread_controller.dart';
+import 'package:partsflow_mobile/features/chat/presentation/providers/thread_view_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/timeline.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_actions_sheet.dart';
@@ -69,13 +71,14 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     _scroll.addListener(() {
       // Lista invertida: "después" = mensajes más antiguos.
       if (_scroll.hasClients && _scroll.position.extentAfter < 300) {
-        ref.read(chatThreadProvider(widget.chat).notifier).loadOlder();
+        ref.read(chatThreadProvider(ChatKey(widget.chat)).notifier).loadOlder();
       }
     });
     _poller = ForegroundPoller(
       interval: chatThreadPollEvery(healthy: ref.read(realtimeProvider)),
       isEnabled: () => mounted,
-      onTick: () => ref.read(chatThreadProvider(widget.chat).notifier).poll(),
+      onTick: () =>
+          ref.read(chatThreadProvider(ChatKey(widget.chat)).notifier).poll(),
     )..start();
   }
 
@@ -113,12 +116,13 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
 
   Future<void> _toggleJulia(bool current) async {
     final r = await ref
-        .read(chatThreadProvider(widget.chat).notifier)
+        .read(chatThreadProvider(ChatKey(widget.chat)).notifier)
         .setJulia(!current);
     _snack(r.message);
   }
 
-  Future<void> _openActions(ThreadState s) async {
+  Future<void> _openActions() async {
+    final s = ref.read(chatThreadProvider(ChatKey(widget.chat)));
     final me = ref.read(apiUserProvider).value;
     final action = await showChatActionsSheet(
       context,
@@ -140,7 +144,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
       default:
         break;
     }
-    final c = ref.read(chatThreadProvider(widget.chat).notifier);
+    final c = ref.read(chatThreadProvider(ChatKey(widget.chat)).notifier);
     final r = switch (action) {
       ChatAction.assign => await c.assignToMe(),
       ChatAction.release => await c.release(),
@@ -162,7 +166,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
 
   /// Acción "Responder" (menú y deslizar): cita el mensaje y enfoca el composer.
   void _reply(Message m) {
-    ref.read(chatThreadProvider(widget.chat).notifier).setReply(m);
+    ref.read(chatThreadProvider(ChatKey(widget.chat)).notifier).setReply(m);
     _composerFocus.requestFocus();
   }
 
@@ -208,7 +212,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
   bool _jumping = false;
 
   Message? _findQuoted(String wid) => ref
-      .read(chatThreadProvider(widget.chat))
+      .read(chatThreadProvider(ChatKey(widget.chat)))
       .messages
       .where((m) => m.id == wid || m.websocketId == wid || m.messageId == wid)
       .firstOrNull;
@@ -242,10 +246,14 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     var idx = -1;
     try {
       var target = _findQuoted(wid);
-      final controller = ref.read(chatThreadProvider(widget.chat).notifier);
+      final controller = ref.read(
+        chatThreadProvider(ChatKey(widget.chat)).notifier,
+      );
       if (target == null) _snack('Buscando mensaje original…');
       while (target == null && pages < 5 && mounted) {
-        if (!ref.read(chatThreadProvider(widget.chat)).hasMoreOlder) break;
+        if (!ref.read(chatThreadProvider(ChatKey(widget.chat))).hasMoreOlder) {
+          break;
+        }
         await controller.loadOlder();
         pages++;
         await WidgetsBinding.instance.endOfFrame;
@@ -319,8 +327,8 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
   }
 
   /// Detecta mensajes que aparecen después de cargado el hilo (ver
-  /// [classifyMessages]).
-  void _classify(ThreadState s) {
+  /// [classifyMessages]). Se llama una vez por cambio real de la timeline.
+  void _classify(ThreadTimelineInput s) {
     if (!s.historyLoaded) return;
     final now = DateTime.now();
     final r = classifyMessages(
@@ -343,99 +351,35 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     });
   }
 
-  /// true una sola vez por mensaje, mientras la detección sea reciente.
-  MessageEntranceKind? _takeEntrance(String id) {
-    final e = _enter[id];
-    if (e == null || _played.contains(id)) return null;
-    if (DateTime.now().difference(e.at) > _enterWindow) return null;
-    _played.add(id);
-    return e.kind;
+  /// Poda los mapas/sets por id a los mensajes presentes en [entries] (evita
+  /// crecimiento sin límite). Los ids ausentes no tienen widget montado.
+  void _prune(List<TimelineEntry> entries) {
+    final present = <String>{
+      for (final e in entries)
+        if (e is MsgEntry) e.message.id,
+    };
+    _keys.removeWhere((id, _) => !present.contains(id));
+    _known.retainAll(present);
+    _played.retainAll(present);
+    _enter.removeWhere((id, _) => !present.contains(id));
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final pf = PfColors.of(context);
-    final s = ref.watch(chatThreadProvider(widget.chat));
-    _poller.setInterval(
-      chatThreadPollEvery(healthy: ref.watch(realtimeProvider)),
-    );
-    final applies = ref.watch(windowAppliesProvider).value ?? false;
-    final me = ref.watch(apiUserProvider).value;
-    final myId = me?.id;
+  /// Memo de la timeline ya clasificada (por identidad de la lista).
+  List<TimelineEntry>? _classifiedFor;
+  Map<String, int> _entryIndexByKeyCache = const {};
+  List<ValueKey<String>> _entryKeysCache = const [];
 
-    final lastInbound = s.lastInboundAt;
-    final windowClosed =
-        applies &&
-        s.historyLoaded &&
-        (lastInbound == null ||
-            DateTime.now().difference(lastInbound) >=
-                const Duration(hours: 24));
-
-    return Scaffold(
-      backgroundColor: pf.bg,
-      body: Column(
-        children: [
-          _Header(
-            state: s,
-            myUserId: myId,
-            onBack: _back,
-            onToggleJulia: () => _toggleJulia(s.chat.client?.juliaOn ?? false),
-            onMore: () => _openActions(s),
-            onCopyPhone: () => _copyPhone(s.chat.phone),
-          ),
-          if (s.order != null)
-            _OrderStrip(
-              order: s.order!,
-              onTap: () {
-                final id = int.tryParse(s.order!.id);
-                if (id == null) return _snack('No pudimos abrir el pedido');
-                context.push(AppRoutes.orderDetail(id));
-              },
-            ),
-          Expanded(child: _buildBody(s, myId)),
-          if (windowClosed)
-            _WindowNotice(
-              onTemplate: () => pickAndSendTemplate(context, ref, widget.chat),
-            )
-          else
-            ChatComposer(
-              chat: widget.chat,
-              templatesEnabled: applies,
-              focusNode: _composerFocus,
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBody(ThreadState s, String? myId) {
-    final pf = PfColors.of(context);
-    final controller = ref.read(chatThreadProvider(widget.chat).notifier);
-
-    if (s.status == ListStatus.loading && s.messages.isEmpty) {
-      return Center(
-        child: Semantics(
-          label: 'Cargando mensajes',
-          child: const CircularProgressIndicator(),
-        ),
-      );
-    }
-    if (s.status == ListStatus.error && s.messages.isEmpty) {
-      return ErrorState(
-        message: s.error ?? 'No pudimos cargar la conversación.',
-        onRetry: controller.retry,
-      );
-    }
-
-    _classify(s);
-    final entries = buildTimeline(s.messages, s.pending, s.notes);
+  void _onTimeline(List<TimelineEntry> entries) {
+    if (identical(_classifiedFor, entries)) return;
+    _classifiedFor = entries;
     _lastEntries = entries;
-    // Key estable por entrada (una sola vez por build) para que Flutter case
-    // filas por identidad y no por posición.
+    _classify(ref.read(threadTimelineInputProvider(ChatKey(widget.chat))));
+    _prune(entries);
+    // Key estable por entrada para que Flutter case filas por identidad.
     final entryKeys = <ValueKey<String>>[];
     final indexByKey = <Object, int>{};
     for (var k = 0; k < entries.length; k++) {
-      var base = switch (entries[k]) {
+      final base = switch (entries[k]) {
         DayEntry(:final date) => 'd:${date.year}-${date.month}-${date.day}',
         NoteEntry(:final note) =>
           'n:${note.date.microsecondsSinceEpoch}:${note.text.hashCode}',
@@ -449,6 +393,141 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
       entryKeys.add(key);
       indexByKey[key] = k;
     }
+    _entryKeysCache = entryKeys;
+    _entryIndexByKeyCache = {
+      for (final e in indexByKey.entries)
+        (e.key as ValueKey<String>).value: e.value,
+    };
+  }
+
+  /// true una sola vez por mensaje, mientras la detección sea reciente.
+  MessageEntranceKind? _takeEntrance(String id) {
+    final e = _enter[id];
+    if (e == null || _played.contains(id)) return null;
+    if (DateTime.now().difference(e.at) > _enterWindow) return null;
+    _played.add(id);
+    return e.kind;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pf = PfColors.of(context);
+    final key = ChatKey(widget.chat);
+    _poller.setInterval(
+      chatThreadPollEvery(healthy: ref.watch(realtimeProvider)),
+    );
+    final applies = ref.watch(windowAppliesProvider).value ?? false;
+    final myId = ref.watch(apiUserProvider.select((u) => u.value?.id));
+
+    return Scaffold(
+      backgroundColor: pf.bg,
+      body: Column(
+        children: [
+          Consumer(
+            builder: (context, ref, _) {
+              final chat = ref.watch(
+                chatThreadProvider(key).select((s) => s.chat),
+              );
+              return _Header(
+                chat: chat,
+                myUserId: myId,
+                onBack: _back,
+                onToggleJulia: () =>
+                    _toggleJulia(chat.client?.juliaOn ?? false),
+                onMore: _openActions,
+                onCopyPhone: () => _copyPhone(chat.phone),
+              );
+            },
+          ),
+          Consumer(
+            builder: (context, ref, _) {
+              final order = ref.watch(
+                chatThreadProvider(key).select((s) => s.order),
+              );
+              if (order == null) return const SizedBox.shrink();
+              return _OrderStrip(
+                order: order,
+                onTap: () {
+                  final id = int.tryParse(order.id);
+                  if (id == null) return _snack('No pudimos abrir el pedido');
+                  context.push(AppRoutes.orderDetail(id));
+                },
+              );
+            },
+          ),
+          Expanded(
+            child: Consumer(
+              builder: (context, ref, _) => _buildBody(ref, myId),
+            ),
+          ),
+          Consumer(
+            builder: (context, ref, _) {
+              final w = ref.watch(
+                chatThreadProvider(key).select(
+                  (s) => (
+                    historyLoaded: s.historyLoaded,
+                    lastInbound: s.lastInboundAt,
+                  ),
+                ),
+              );
+              final windowClosed =
+                  applies &&
+                  w.historyLoaded &&
+                  (w.lastInbound == null ||
+                      DateTime.now().difference(w.lastInbound!) >=
+                          const Duration(hours: 24));
+              if (windowClosed) {
+                return _WindowNotice(
+                  onTemplate: () =>
+                      pickAndSendTemplate(context, ref, widget.chat),
+                );
+              }
+              return ChatComposer(
+                chat: widget.chat,
+                templatesEnabled: applies,
+                focusNode: _composerFocus,
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBody(WidgetRef ref, String? myId) {
+    final pf = PfColors.of(context);
+    final key = ChatKey(widget.chat);
+    final controller = ref.read(chatThreadProvider(key).notifier);
+    final st = ref.watch(
+      chatThreadProvider(key).select(
+        (s) => (
+          status: s.status,
+          error: s.error,
+          loadingOlder: s.loadingOlder,
+          noMessages: s.messages.isEmpty,
+        ),
+      ),
+    );
+
+    if (st.status == ListStatus.loading && st.noMessages) {
+      return Center(
+        child: Semantics(
+          label: 'Cargando mensajes',
+          child: const CircularProgressIndicator(),
+        ),
+      );
+    }
+    if (st.status == ListStatus.error && st.noMessages) {
+      return ErrorState(
+        message: st.error ?? 'No pudimos cargar la conversación.',
+        onRetry: controller.retry,
+      );
+    }
+
+    final entries = ref.watch(threadTimelineProvider(key));
+    _onTimeline(entries);
+    final entryKeys = _entryKeysCache;
+    final indexByKey = _entryIndexByKeyCache;
     final reduce = MediaQuery.disableAnimationsOf(context);
     if (entries.isEmpty) {
       return Center(
@@ -467,9 +546,9 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
         controller: _scroll,
         reverse: true,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-        itemCount: entries.length + (s.loadingOlder ? 1 : 0),
+        itemCount: entries.length + (st.loadingOlder ? 1 : 0),
         findChildIndexCallback: (key) =>
-            key is ValueKey<String> ? indexByKey[key] : null,
+            key is ValueKey<String> ? indexByKey[key.value] : null,
         itemBuilder: (context, i) {
           if (i >= entries.length) {
             return const Padding(
@@ -569,7 +648,7 @@ extension on _ChatDetailPageState {
 
 class _Header extends StatelessWidget {
   const _Header({
-    required this.state,
+    required this.chat,
     required this.myUserId,
     required this.onBack,
     required this.onToggleJulia,
@@ -577,7 +656,7 @@ class _Header extends StatelessWidget {
     required this.onCopyPhone,
   });
 
-  final ThreadState state;
+  final Chat chat;
   final String? myUserId;
   final VoidCallback onBack;
   final VoidCallback onToggleJulia;
@@ -588,7 +667,6 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     final pf = PfColors.of(context);
     final theme = Theme.of(context);
-    final chat = state.chat;
     final client = chat.client;
     final responsible = client?.responsible;
     final owner = responsible == null

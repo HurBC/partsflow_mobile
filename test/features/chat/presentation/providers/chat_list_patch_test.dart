@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_event.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
+import 'package:partsflow_mobile/features/chat/domain/cancel_signal.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_query.dart';
 import 'package:partsflow_mobile/features/chat/domain/repositories/chat_repository.dart';
@@ -37,7 +38,10 @@ class _Repo implements ChatRepository {
   ];
 
   @override
-  Future<Result<ChatPage>> searchChats(ChatQuery query) async {
+  Future<Result<ChatPage>> searchChats(
+    ChatQuery query, {
+    CancelSignal? cancel,
+  }) async {
     searchCalls++;
     final g = gate;
     if (g != null) {
@@ -125,32 +129,35 @@ void main() {
     expect(repo.searchCalls, 2);
   });
 
-  test('evento durante una recarga en vuelo sobrevive a su respuesta', () async {
-    repo.gate = Completer<void>();
-    final ctl = c.read(chatListControllerProvider.notifier);
-    final f = ctl.poll(); // la respuesta no incluirá el mensaje de abajo
-    await settle(10);
-    _FakeRealtime.ctrl.add(
-      RealtimeNewMessages([
-        {
-          'message': 'nuevo',
-          'type': 'text',
-          'flow': 'outbound',
-          'message_id': 'm77',
-          'date': '2026-01-01T11:00:00Z',
-          'chat': {'id': '56922222222@c.us'},
-        },
-      ]),
-    );
-    await settle(10);
-    expect(
-      c.read(chatListControllerProvider).items.first.lastMessage!.body,
-      'nuevo',
-    );
-    repo.gate!.complete();
-    await f;
-    final items = c.read(chatListControllerProvider).items;
-    expect(items.first.id, '56922222222@c.us');
-    expect(items.first.lastMessage!.body, 'nuevo');
-  });
+  test(
+    'evento durante una recarga en vuelo sobrevive a su respuesta',
+    () async {
+      repo.gate = Completer<void>();
+      final ctl = c.read(chatListControllerProvider.notifier);
+      final f = ctl.poll(); // la respuesta no incluirá el mensaje de abajo
+      await settle(10);
+      _FakeRealtime.ctrl.add(
+        RealtimeNewMessages([
+          {
+            'message': 'nuevo',
+            'type': 'text',
+            'flow': 'outbound',
+            'message_id': 'm77',
+            'date': '2026-01-01T11:00:00Z',
+            'chat': {'id': '56922222222@c.us'},
+          },
+        ]),
+      );
+      await settle(10);
+      expect(
+        c.read(chatListControllerProvider).items.first.lastMessage!.body,
+        'nuevo',
+      );
+      repo.gate!.complete();
+      await f;
+      final items = c.read(chatListControllerProvider).items;
+      expect(items.first.id, '56922222222@c.us');
+      expect(items.first.lastMessage!.body, 'nuevo');
+    },
+  );
 }

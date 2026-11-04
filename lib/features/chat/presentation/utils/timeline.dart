@@ -1,5 +1,5 @@
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
-import 'package:partsflow_mobile/features/chat/presentation/providers/chat_thread_controller.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/thread_note.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/day_utils.dart';
 
 sealed class TimelineEntry {

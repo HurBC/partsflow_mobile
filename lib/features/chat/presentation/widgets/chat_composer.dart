@@ -9,6 +9,7 @@ import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/chat_key.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachment.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/quick_answer.dart';
@@ -62,7 +63,8 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
   Timer? _ticker;
   bool _busy = false;
 
-  ChatThread get _thread => ref.read(chatThreadProvider(widget.chat).notifier);
+  ChatThread get _thread =>
+      ref.read(chatThreadProvider(ChatKey(widget.chat)).notifier);
 
   @override
   void initState() {
@@ -511,7 +513,7 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
     Duration motion(int ms) =>
         reduce ? Duration.zero : Duration(milliseconds: ms);
     final reply = ref.watch(
-      chatThreadProvider(widget.chat).select((s) => s.replyTo),
+      chatThreadProvider(ChatKey(widget.chat)).select((s) => s.replyTo),
     );
     final slash =
         _controller.text.startsWith('/') &&

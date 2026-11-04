@@ -22,8 +22,14 @@ class ChatRemoteDataSource {
     ),
   );
 
-  Future<Object?> searchChats(Map<String, dynamic> params) async =>
-      (await _dio.get<Object?>('chat/search/', queryParameters: params)).data;
+  Future<Object?> searchChats(
+    Map<String, dynamic> params, {
+    CancelToken? cancelToken,
+  }) async => (await _dio.get<Object?>(
+    'chat/search/',
+    queryParameters: params,
+    cancelToken: cancelToken,
+  )).data;
 
   Future<Object?> clientStatuses() async =>
       (await _dio.get<Object?>('clients/statuses/')).data;

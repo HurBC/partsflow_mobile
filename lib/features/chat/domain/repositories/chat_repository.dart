@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:partsflow_mobile/core/utils/result.dart';
+import 'package:partsflow_mobile/features/chat/domain/cancel_signal.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_extras.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_query.dart';
@@ -11,7 +12,9 @@ import 'package:partsflow_mobile/features/chat/domain/entities/quick_answer.dart
 import 'package:partsflow_mobile/features/chat/domain/entities/send_outcome.dart';
 
 abstract class ChatRepository {
-  Future<Result<ChatPage>> searchChats(ChatQuery query);
+  /// [cancel] aborta el request en vuelo (la respuesta pasa a ser un error
+  /// que el llamador debe descartar si `cancel.isCancelled`).
+  Future<Result<ChatPage>> searchChats(ChatQuery query, {CancelSignal? cancel});
 
   /// Estados de cliente de la sucursal (`clients/statuses/`).
   Future<Result<List<String>>> clientStatuses();

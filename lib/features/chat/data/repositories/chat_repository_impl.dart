@@ -7,6 +7,7 @@ import 'package:partsflow_mobile/core/utils/json_utils.dart';
 import 'package:partsflow_mobile/core/utils/pf_log.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/chat/data/datasources/chat_remote_datasource.dart';
+import 'package:partsflow_mobile/features/chat/domain/cancel_signal.dart';
 import 'package:partsflow_mobile/features/chat/data/mappers/chat_mapper.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_extras.dart';
@@ -53,7 +54,10 @@ class ChatRepositoryImpl implements ChatRepository {
   }
 
   @override
-  Future<Result<ChatPage>> searchChats(ChatQuery q) => _guard(() async {
+  Future<Result<ChatPage>> searchChats(
+    ChatQuery q, {
+    CancelSignal? cancel,
+  }) => _guard(() async {
     final p = <String, dynamic>{
       'size': 50,
       'include': 'lastMessage',
@@ -92,7 +96,9 @@ class ChatRepositoryImpl implements ChatRepository {
       if (q.cursorId != null) p['last_message_id'] = q.cursorId;
     }
 
-    final data = await _remote.searchChats(p);
+    final token = CancelToken();
+    cancel?.whenCancelled.then((_) => token.cancel('search superseded'));
+    final data = await _remote.searchChats(p, cancelToken: token);
     final map = asMap(data);
     final rawChats = data is List ? data : asList(map?['chats']);
     final chats = <Chat>[];

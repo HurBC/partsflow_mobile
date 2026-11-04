@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:collection/collection.dart';
 import 'package:partsflow_mobile/core/network/dio_client.dart';
 import 'package:partsflow_mobile/core/providers/auth_state_provider.dart';
 import 'package:partsflow_mobile/core/utils/reload_gate.dart';
@@ -82,6 +83,33 @@ class OrdersListState {
     loadingMore: loadingMore ?? this.loadingMore,
     error: clearError ? null : (error ?? this.error),
   );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OrdersListState &&
+          other.stage == stage &&
+          other.searchText == searchText &&
+          const DeepCollectionEquality().equals(other.items, items) &&
+          const DeepCollectionEquality().equals(other.counts, counts) &&
+          other.hasMore == hasMore &&
+          other.pagesLoaded == pagesLoaded &&
+          other.status == status &&
+          other.loadingMore == loadingMore &&
+          other.error == error;
+
+  @override
+  int get hashCode => Object.hashAll([
+    stage,
+    searchText,
+    const DeepCollectionEquality().hash(items),
+    const DeepCollectionEquality().hash(counts),
+    hasMore,
+    pagesLoaded,
+    status,
+    loadingMore,
+    error,
+  ]);
 }
 
 @Riverpod(keepAlive: true)
