@@ -9,6 +9,7 @@ import 'package:partsflow_mobile/core/providers/storage_providers.dart';
 import 'package:partsflow_mobile/core/storage/storage_keys.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_event.dart';
+import 'package:partsflow_mobile/core/utils/pf_log.dart';
 import 'package:partsflow_mobile/core/utils/reload_gate.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
@@ -223,7 +224,17 @@ class ChatListController extends _$ChatListController {
       if (e is RealtimeResync) {
         autoPoll();
       } else if (pfPatchList) {
-        if (_patchFromEvent(e)) _signalPoll();
+        final sw = pfDebugLog ? (Stopwatch()..start()) : null;
+        final reload = _patchFromEvent(e);
+        if (sw != null) {
+          final n = switch (e) {
+            RealtimeNewMessages(:final items) => items.length,
+            RealtimeStatusUpdates(:final items) => items.length,
+            _ => 1,
+          };
+          pfLog('rt-apply list ms=${sw.elapsedMilliseconds} n=$n');
+        }
+        if (reload) _signalPoll();
       } else {
         _signalPoll();
       }
