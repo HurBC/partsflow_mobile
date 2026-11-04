@@ -8,6 +8,7 @@ import 'package:partsflow_mobile/features/chat/presentation/providers/chat_provi
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_actions_sheet.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_client_sheets.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_reminders_sheet.dart';
 
 /// Acciones de un chat desde su fila del listado (mantener presionado): la
 /// misma hoja del detalle, pero sin abrir el hilo (no carga el historial).
@@ -33,7 +34,7 @@ Future<void> showChatRowActions(
     case ChatAction.issues:
       return showClientIssuesSheet(context, chat);
     case ChatAction.reminder:
-      return showClientReminderSheet(context, chat);
+      return showClientRemindersSheet(context, chat);
     case ChatAction.copyPhone:
       final text = formatPhone(chat.phone).replaceAll(' ', '');
       if (text.isEmpty) return;

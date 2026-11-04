@@ -4,7 +4,7 @@ import 'package:partsflow_mobile/features/chat/domain/entities/chat_key.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/reminder.dart';
 import 'package:partsflow_mobile/features/chat/domain/logic/reminder_extension.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
-import 'package:partsflow_mobile/features/chat/presentation/providers/chat_thread_controller.dart';
+import 'package:partsflow_mobile/features/chat/presentation/providers/client_extras_sync.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 part 'reminders_controller.g.dart';
@@ -78,9 +78,7 @@ class RemindersController extends _$RemindersController {
     ];
     state = AsyncData(next);
     if (next.isEmpty) {
-      ref
-          .read(chatThreadProvider(chatKey).notifier)
-          .applyClientExtras(hasPendingReminder: false);
+      applyClientExtrasFromRef(ref, chatKey.initial, hasPendingReminder: false);
     }
   }
 }
