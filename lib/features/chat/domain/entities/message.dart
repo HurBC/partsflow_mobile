@@ -1,8 +1,21 @@
+import 'package:collection/collection.dart';
+
 class ContactCard {
   const ContactCard({required this.name, this.phones = const []});
 
   final String name;
   final List<String> phones;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ContactCard &&
+          other.name == name &&
+          const DeepCollectionEquality().equals(other.phones, phones);
+
+  @override
+  int get hashCode =>
+      Object.hashAll([name, const DeepCollectionEquality().hash(phones)]);
 }
 
 enum MessageAuthor { client, julia, david, assistant, welcome, me, otherAgent }
@@ -134,13 +147,14 @@ class Message {
   }
 
   Message copyWith({
+    String? id,
     String? status,
     String? errorText,
     bool clearError = false,
     double? uploadProgress,
     bool clearProgress = false,
   }) => Message(
-    id: id,
+    id: id ?? this.id,
     messageId: messageId,
     date: date,
     type: type,
@@ -175,4 +189,80 @@ class Message {
     errorCode: errorCode,
     isEdited: isEdited,
   );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Message &&
+          other.id == id &&
+          other.messageId == messageId &&
+          other.date == date &&
+          other.type == type &&
+          other.flow == flow &&
+          other.text == text &&
+          other.status == status &&
+          other.reference == reference &&
+          other.senderName == senderName &&
+          other.agent == agent &&
+          other.responsibleId == responsibleId &&
+          other.source == source &&
+          other.mediaUrl == mediaUrl &&
+          other.mediaFilename == mediaFilename &&
+          other.quotedBody == quotedBody &&
+          other.quotedFrom == quotedFrom &&
+          other.quotedWid == quotedWid &&
+          other.quotedType == quotedType &&
+          other.locationLabel == locationLabel &&
+          other.latitude == latitude &&
+          other.longitude == longitude &&
+          const DeepCollectionEquality().equals(
+            other.contactNames,
+            contactNames,
+          ) &&
+          const DeepCollectionEquality().equals(other.contacts, contacts) &&
+          other.mediaId == mediaId &&
+          other.mediaMime == mediaMime &&
+          other.localPath == localPath &&
+          other.uploadProgress == uploadProgress &&
+          other.isLocal == isLocal &&
+          other.errorText == errorText &&
+          other.websocketId == websocketId &&
+          other.errorCode == errorCode &&
+          other.isEdited == isEdited;
+
+  @override
+  int get hashCode => Object.hashAll([
+    id,
+    messageId,
+    date,
+    type,
+    flow,
+    text,
+    status,
+    reference,
+    senderName,
+    agent,
+    responsibleId,
+    source,
+    mediaUrl,
+    mediaFilename,
+    quotedBody,
+    quotedFrom,
+    quotedWid,
+    quotedType,
+    locationLabel,
+    latitude,
+    longitude,
+    const DeepCollectionEquality().hash(contactNames),
+    const DeepCollectionEquality().hash(contacts),
+    mediaId,
+    mediaMime,
+    localPath,
+    uploadProgress,
+    isLocal,
+    errorText,
+    websocketId,
+    errorCode,
+    isEdited,
+  ]);
 }

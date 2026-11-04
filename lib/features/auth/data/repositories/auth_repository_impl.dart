@@ -1,7 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:partsflow_mobile/core/errors/failure.dart';
-import 'package:partsflow_mobile/core/storage/secure_storage.dart';
-import 'package:partsflow_mobile/core/storage/storage_keys.dart';
+import 'package:partsflow_mobile/core/storage/token_store.dart';
 import 'package:partsflow_mobile/core/utils/jwt_decoder.dart';
 import 'package:partsflow_mobile/core/utils/json_utils.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
@@ -12,10 +11,10 @@ import 'package:partsflow_mobile/features/auth/domain/entities/login_outcome.dar
 import 'package:partsflow_mobile/features/auth/domain/repositories/auth_repository.dart';
 
 class AuthRepositoryImpl implements AuthRepository {
-  AuthRepositoryImpl(this._remote, this._storage);
+  AuthRepositoryImpl(this._remote, this._tokens);
 
   final AuthRemoteDataSource _remote;
-  final SecureStorage _storage;
+  final TokenStore _tokens;
 
   @override
   Future<Result<LoginOutcome>> login({
@@ -51,15 +50,11 @@ class AuthRepositoryImpl implements AuthRepository {
 
       final token = res.token;
       if (token != null) {
-        await _storage.write(StorageKeys.token, token);
-        final refresh = res.refreshToken;
-        if (refresh != null) {
-          await _storage.write(StorageKeys.refreshToken, refresh);
-        }
-        final access = res.accessToken;
-        if (access != null) {
-          await _storage.write(StorageKeys.accessToken, access);
-        }
+        await _tokens.saveTokens(
+          token: token,
+          refreshToken: res.refreshToken,
+          accessToken: res.accessToken,
+        );
         return Result.ok(const LoggedIn());
       }
 
@@ -85,7 +80,7 @@ class AuthRepositoryImpl implements AuthRepository {
 
   @override
   Future<CurrentUser?> currentUser() async {
-    final token = await _storage.read(StorageKeys.token);
+    final token = await _tokens.readToken();
     if (token == null) return null;
     final c = decodeJwtPayload(token);
     if (c.isEmpty) return null;
@@ -118,7 +113,7 @@ class AuthRepositoryImpl implements AuthRepository {
   }
 
   @override
-  Future<void> logout() => _storage.deleteAll();
+  Future<void> logout() => _tokens.clear();
 
   ApiUser? _apiUser(Object? json) {
     final m = asMap(json);

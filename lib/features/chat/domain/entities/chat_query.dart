@@ -60,6 +60,18 @@ class ChatFilters {
     if (unassigned && c.client?.responsible != null) return false;
     return true;
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ChatFilters &&
+          other.unread == unread &&
+          other.unanswered == unanswered &&
+          other.julia == julia &&
+          other.unassigned == unassigned;
+
+  @override
+  int get hashCode => Object.hashAll([unread, unanswered, julia, unassigned]);
 }
 
 /// Filtros avanzados que viajan como params de `chat/search/` (C1). Se

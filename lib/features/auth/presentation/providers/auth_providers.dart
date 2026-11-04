@@ -17,7 +17,7 @@ part 'auth_providers.g.dart';
 AuthRepository authRepository(Ref ref) {
   return AuthRepositoryImpl(
     AuthRemoteDataSource(ref.watch(dioProvider)),
-    ref.watch(secureStorageProvider),
+    ref.watch(tokenStoreProvider),
   );
 }
 

@@ -1,11 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:partsflow_mobile/core/router/tab_visibility.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
 import 'package:partsflow_mobile/core/router/app_routes.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/realtime/chat_poll_policy.dart';
 import 'package:partsflow_mobile/core/utils/foreground_poller.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
@@ -13,6 +15,7 @@ import 'package:partsflow_mobile/features/chat/domain/entities/chat_extras.dart'
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_query.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_extras_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
+import 'package:partsflow_mobile/features/chat/presentation/providers/chat_list_view_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_search_provider.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_common.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_filters_sheet.dart';
@@ -35,6 +38,8 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
   late final ForegroundPoller _poller;
   // true mientras la conversación está abierta encima de la lista.
   bool _covered = false;
+  // false mientras otra tab del shell está al frente (la rama sigue viva).
+  bool _tabVisible = true;
 
   @override
   void initState() {
@@ -42,25 +47,41 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
     _scroll.addListener(_onScroll);
     // El umbral de Pendientes depende de la hora: re-evaluar cada 30 s.
     _clock = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted && ref.read(chatListControllerProvider).thresholdApplies) {
-        setState(() {});
+      if (mounted &&
+          _tabVisible &&
+          !_covered &&
+          ref.read(chatListControllerProvider).thresholdApplies) {
+        // Solo reconstruye la lista si el resultado visible cambia.
+        ref.read(chatClockProvider.notifier).tick();
       }
     });
     _poller = ForegroundPoller(
       interval: _pollEvery(ref.read(realtimeProvider)),
-      isEnabled: () => mounted && !_covered,
+      isEnabled: () => mounted && !_covered && _tabVisible,
       onTick: () {
         if (ref.read(apiUserProvider).value == null &&
             !ref.read(apiUserProvider).isLoading) {
           ref.invalidate(apiUserProvider);
         }
-        ref.read(chatListControllerProvider.notifier).poll();
+        ref.read(chatListControllerProvider.notifier).autoPoll();
       },
     )..start();
   }
 
-  // Con tiempo real el sondeo baja a 60 s; sin él, 20 s.
-  Duration _pollEvery(bool realtime) => Duration(seconds: realtime ? 60 : 20);
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final visible = TabVisibility.isActive(context, 0);
+    if (visible == _tabVisible) return;
+    _tabVisible = visible;
+    // Al volver a la tab el poller estuvo pausado: refresca (con cooldown).
+    if (visible && !_covered) {
+      ref.read(chatListControllerProvider.notifier).autoPoll();
+    }
+  }
+
+  // Socket sano: watchdog de 120 s; si no, 20 s.
+  Duration _pollEvery(bool healthy) => chatListPollEvery(healthy: healthy);
 
   @override
   void dispose() {
@@ -115,11 +136,14 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
   }
 
   /// Chips de filtros activos, cada uno con su "x".
-  List<_ActiveFilter> _activeFilters(ChatListState s) {
+  List<_ActiveFilter> _activeFilters(
+    WidgetRef ref,
+    ChatFilters f,
+    AdvancedFilters a,
+    SearchMode searchMode,
+  ) {
     final c = ref.read(chatListControllerProvider.notifier);
     final tags = ref.watch(filterTagsProvider).value ?? const [];
-    final f = s.filters;
-    final a = s.advanced;
     String tagName(String id) {
       for (final t in tags) {
         if (t.id == id) return t.name;
@@ -148,9 +172,9 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
           'Sin asignar',
           () => c.setFilters(f.copyWith(unassigned: false)),
         ),
-      if (s.searchMode != SearchMode.all)
+      if (searchMode != SearchMode.all)
         _ActiveFilter(
-          'Buscar por ${s.searchMode.label.toLowerCase()}',
+          'Buscar por ${searchMode.label.toLowerCase()}',
           () => c.setMode(SearchMode.all),
         ),
       if (a.channel != null)
@@ -208,7 +232,6 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
   @override
   Widget build(BuildContext context) {
     final pf = PfColors.of(context);
-    final s = ref.watch(chatListControllerProvider);
     final user = ref.watch(currentUserProvider).value;
     final realtime = ref.watch(realtimeProvider);
     _poller.setInterval(_pollEvery(realtime));
@@ -222,35 +245,58 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
     return Scaffold(
       body: Column(
         children: [
-          _Header(
-            subtitle: subtitle,
-            searchController: _searchController,
-            searchMode: s.searchMode,
-            filterCount: s.activeFilterCount,
-            activeFilters: _activeFilters(s),
-            tab: s.tab,
-            assignedEnabled: ref.watch(apiUserProvider).value != null,
-            onSearchChanged: _onSearchChanged,
-            onMode: (m) =>
-                ref.read(chatListControllerProvider.notifier).setMode(m),
-            onClear: () {
-              _searchController.clear();
-              _debounce?.cancel();
-              ref.read(chatListControllerProvider.notifier).setSearch('');
-              setState(() {});
-            },
-            onFilters: _openFilters,
-            onTab: (t) {
-              if (_scroll.hasClients) _scroll.jumpTo(0);
-              ref.read(chatListControllerProvider.notifier).setTab(t);
+          // Observa solo los campos del header (modo, filtros, pestaña).
+          Consumer(
+            builder: (context, ref, _) {
+              final h = ref.watch(
+                chatListControllerProvider.select(
+                  (s) => (
+                    tab: s.tab,
+                    searchMode: s.searchMode,
+                    filters: s.filters,
+                    advanced: s.advanced,
+                  ),
+                ),
+              );
+              return _Header(
+                subtitle: subtitle,
+                searchController: _searchController,
+                searchMode: h.searchMode,
+                filterCount: ChatListState(
+                  searchMode: h.searchMode,
+                  filters: h.filters,
+                  advanced: h.advanced,
+                ).activeFilterCount,
+                activeFilters: _activeFilters(
+                  ref,
+                  h.filters,
+                  h.advanced,
+                  h.searchMode,
+                ),
+                tab: h.tab,
+                assignedEnabled: ref.watch(apiUserProvider).value != null,
+                onSearchChanged: _onSearchChanged,
+                onMode: (m) =>
+                    ref.read(chatListControllerProvider.notifier).setMode(m),
+                onClear: () {
+                  _searchController.clear();
+                  _debounce?.cancel();
+                  ref.read(chatListControllerProvider.notifier).setSearch('');
+                  setState(() {});
+                },
+                onFilters: _openFilters,
+                onTab: (t) {
+                  if (_scroll.hasClients) _scroll.jumpTo(0);
+                  ref.read(chatListControllerProvider.notifier).setTab(t);
+                },
+              );
             },
           ),
           if (!realtime) const _NoRealtimeBanner(),
           Expanded(
             child: ColoredBox(
               color: pf.surface,
-              child: _Body(
-                state: s,
+              child: ChatListBody(
                 scroll: _scroll,
                 onRefresh: _refresh,
                 onOpen: _openChat,
@@ -701,110 +747,181 @@ class _TabPill extends StatelessWidget {
   }
 }
 
-class _Body extends ConsumerWidget {
-  const _Body({
-    required this.state,
+enum _BodyMode { skeleton, error, global, list }
+
+/// Cuerpo de la página: decide qué mostrar observando solo el modo; cada
+/// subárbol observa únicamente lo que pinta.
+class ChatListBody extends ConsumerWidget {
+  const ChatListBody({
+    super.key,
     required this.scroll,
     required this.onRefresh,
     required this.onOpen,
   });
 
-  final ChatListState state;
   final ScrollController scroll;
   final Future<void> Function() onRefresh;
   final ValueChanged<Chat> onOpen;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final pf = PfColors.of(context);
-
-    if (state.isGlobalSearch &&
-        state.status != ListStatus.error &&
-        state.status != ListStatus.loading) {
-      return _GlobalResults(state: state, onRefresh: onRefresh, onOpen: onOpen);
-    }
-
-    switch (state.status) {
-      case ListStatus.loading:
+    final mode = ref.watch(
+      chatListControllerProvider.select(
+        (s) => s.isGlobalSearch && s.status == ListStatus.data
+            ? _BodyMode.global
+            : switch (s.status) {
+                ListStatus.loading => _BodyMode.skeleton,
+                ListStatus.error => _BodyMode.error,
+                ListStatus.data => _BodyMode.list,
+              },
+      ),
+    );
+    switch (mode) {
+      case _BodyMode.skeleton:
         return const _Skeleton();
-      case ListStatus.error:
+      case _BodyMode.error:
+        final error = ref.watch(
+          chatListControllerProvider.select((s) => s.error),
+        );
         return ErrorState(
-          message: state.error ?? 'No pudimos cargar los chats.',
+          message: error ?? 'No pudimos cargar los chats.',
           onRetry: () => ref.read(chatListControllerProvider.notifier).reload(),
         );
-      case ListStatus.data:
-        break;
+      case _BodyMode.global:
+        return _GlobalResults(onRefresh: onRefresh, onOpen: onOpen);
+      case _BodyMode.list:
+        return Stack(
+          children: [
+            _VisibleList(scroll: scroll, onRefresh: onRefresh, onOpen: onOpen),
+            const _RefiningBar(),
+          ],
+        );
     }
+  }
+}
 
-    final items = state.visible;
-    if (items.isEmpty) {
-      final searching =
-          state.searchText.isNotEmpty || state.activeFilterCount > 0;
-      return RefreshIndicator(
-        onRefresh: onRefresh,
-        child: LayoutBuilder(
-          builder: (context, c) => ListView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            children: [
-              SizedBox(
-                height: c.maxHeight,
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          searching
-                              ? Icons.search_off
-                              : Icons.chat_bubble_outline,
-                          size: 40,
-                          color: pf.text2,
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          searching ? 'Sin resultados' : _emptyTitle(state.tab),
-                          style: Theme.of(
-                            context,
-                          ).textTheme.titleMedium?.copyWith(color: pf.text),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          searching
-                              ? 'Prueba con otra búsqueda o quita los filtros.'
-                              : 'Desliza hacia abajo para actualizar.',
-                          style: Theme.of(
-                            context,
-                          ).textTheme.bodyMedium?.copyWith(color: pf.text2),
-                          textAlign: TextAlign.center,
-                        ),
-                        if (state.hidesLocally && state.hasMore) ...[
-                          const SizedBox(height: 12),
-                          TextButton(
-                            onPressed: () => ref
-                                .read(chatListControllerProvider.notifier)
-                                .loadMore(),
-                            child: const Text('Cargar más chats'),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
+/// Indicador de refinamiento (texto / filtros avanzados): la lista actual
+/// sigue en pantalla hasta que llega la respuesta.
+class _RefiningBar extends ConsumerWidget {
+  const _RefiningBar();
 
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final refining = ref.watch(
+      chatListControllerProvider.select((s) => s.refining),
+    );
+    if (!refining) return const SizedBox.shrink();
+    return const Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: LinearProgressIndicator(minHeight: 2),
+    );
+  }
+}
+
+/// Observa solo la secuencia de ids visibles.
+class _VisibleList extends ConsumerWidget {
+  const _VisibleList({
+    required this.scroll,
+    required this.onRefresh,
+    required this.onOpen,
+  });
+
+  final ScrollController scroll;
+  final Future<void> Function() onRefresh;
+  final ValueChanged<Chat> onOpen;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ids = ref.watch(chatVisibleIdsProvider).ids;
+    if (ids.isEmpty) return _EmptyView(onRefresh: onRefresh);
     return _ChatListView(
-      items: items,
-      state: state,
+      ids: ids,
       scroll: scroll,
       onRefresh: onRefresh,
       onOpen: onOpen,
+    );
+  }
+}
+
+class _EmptyView extends ConsumerWidget {
+  const _EmptyView({required this.onRefresh});
+
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pf = PfColors.of(context);
+    final v = ref.watch(
+      chatListControllerProvider.select(
+        (s) => (
+          refining: s.refining,
+          searching: s.searchText.isNotEmpty || s.activeFilterCount > 0,
+          tab: s.tab,
+          canLoadMore: s.hidesLocally && s.hasMore,
+        ),
+      ),
+    );
+    // Refinando desde una lista vacía no hay nada que conservar.
+    if (v.refining) return const _Skeleton();
+    final searching = v.searching;
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: LayoutBuilder(
+        builder: (context, c) => ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            SizedBox(
+              height: c.maxHeight,
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        searching
+                            ? Icons.search_off
+                            : Icons.chat_bubble_outline,
+                        size: 40,
+                        color: pf.text2,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        searching ? 'Sin resultados' : _emptyTitle(v.tab),
+                        style: Theme.of(
+                          context,
+                        ).textTheme.titleMedium?.copyWith(color: pf.text),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        searching
+                            ? 'Prueba con otra búsqueda o quita los filtros.'
+                            : 'Desliza hacia abajo para actualizar.',
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodyMedium?.copyWith(color: pf.text2),
+                        textAlign: TextAlign.center,
+                      ),
+                      if (v.canLoadMore) ...[
+                        const SizedBox(height: 12),
+                        TextButton(
+                          onPressed: () => ref
+                              .read(chatListControllerProvider.notifier)
+                              .loadMore(),
+                          child: const Text('Cargar más chats'),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -819,22 +936,22 @@ class _Body extends ConsumerWidget {
 }
 
 /// Lista de chats con entrada escalonada. Su State vive mientras la lista
-/// está en pantalla: se crea al reemplazarse el resultado (carga inicial,
-/// pestaña, filtros, búsqueda: pasan por el skeleton) y NO se recrea con
-/// sondeos, WebSocket, paginación ni pull-to-refresh. Los ids que escalonan
-/// son los presentes al montarse (hasta el índice 12) y cada uno anima una
-/// sola vez aunque ListView.builder recicle sus widgets.
+/// está en pantalla: se crea al reemplazarse el resultado por otra pestaña o
+/// carga con skeleton y NO se recrea con sondeos, WebSocket, paginación,
+/// pull-to-refresh ni refinamientos. Los ids que escalonan son los presentes
+/// al montarse (hasta el índice 12) y cada uno anima una sola vez aunque
+/// ListView.builder recicle sus widgets. Solo se reconstruye cuando cambia la
+/// secuencia de ids; cada fila observa su propio chat y el pie su propio
+/// estado de carga.
 class _ChatListView extends ConsumerStatefulWidget {
   const _ChatListView({
-    required this.items,
-    required this.state,
+    required this.ids,
     required this.scroll,
     required this.onRefresh,
     required this.onOpen,
   });
 
-  final List<Chat> items;
-  final ChatListState state;
+  final List<String> ids;
   final ScrollController scroll;
   final Future<void> Function() onRefresh;
   final ValueChanged<Chat> onOpen;
@@ -848,66 +965,93 @@ class _ChatListViewState extends ConsumerState<_ChatListView> {
   static const _window = Duration(seconds: 1);
 
   late final Map<String, int> _stagger = {
-    for (var i = 0; i < widget.items.length && i <= _maxStaggerIndex; i++)
-      widget.items[i].id: i,
+    for (var i = 0; i < widget.ids.length && i <= _maxStaggerIndex; i++)
+      widget.ids[i]: i,
   };
   final _played = <String>{};
   final _mountedAt = DateTime.now();
 
   @override
   Widget build(BuildContext context) {
-    final state = widget.state;
-    final items = widget.items;
-    final showMoreButton =
-        state.hidesLocally && state.hasMore && !state.loadingMore;
+    final ids = widget.ids;
     return RefreshIndicator(
       onRefresh: widget.onRefresh,
       child: ListView.builder(
         controller: widget.scroll,
         physics: const AlwaysScrollableScrollPhysics(),
-        itemCount: items.length + 1,
+        itemCount: ids.length + 1,
         itemBuilder: (context, i) {
-          if (i == items.length) {
-            if (state.loadingMore) {
-              return const Padding(
-                padding: EdgeInsets.all(16),
-                child: Center(
-                  child: SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2.5),
-                  ),
-                ),
-              );
-            }
-            if (showMoreButton) {
-              return Padding(
-                padding: const EdgeInsets.all(8),
-                child: TextButton(
-                  onPressed: () =>
-                      ref.read(chatListControllerProvider.notifier).loadMore(),
-                  child: const Text('Cargar más chats'),
-                ),
-              );
-            }
-            return const SizedBox(height: 8);
-          }
-          final chat = items[i];
-          final idx = _stagger[chat.id];
+          if (i == ids.length) return const _ListFooter();
+          final id = ids[i];
+          final idx = _stagger[id];
           final animate =
               idx != null &&
-              !_played.contains(chat.id) &&
+              !_played.contains(id) &&
               DateTime.now().difference(_mountedAt) < _window;
-          if (animate) _played.add(chat.id);
+          if (animate) _played.add(id);
           return StaggerIn(
-            key: ValueKey(chat.id),
+            key: ValueKey(id),
             animate: animate,
             delay: Duration(milliseconds: 35 * (idx ?? 0)),
-            child: ChatTile(chat: chat, onTap: () => widget.onOpen(chat)),
+            child: _ChatRow(id: id, onOpen: widget.onOpen),
           );
         },
       ),
     );
+  }
+}
+
+/// Fila: observa SU chat por id; un cambio en otro chat no la reconstruye.
+class _ChatRow extends ConsumerWidget {
+  const _ChatRow({required this.id, required this.onOpen});
+
+  final String id;
+  final ValueChanged<Chat> onOpen;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final chat = ref.watch(chatByIdProvider(id));
+    if (chat == null) return const SizedBox.shrink();
+    return ChatTile(chat: chat, onTap: () => onOpen(chat));
+  }
+}
+
+class _ListFooter extends ConsumerWidget {
+  const _ListFooter();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final v = ref.watch(
+      chatListControllerProvider.select(
+        (s) => (
+          loadingMore: s.loadingMore,
+          showMore: s.hidesLocally && s.hasMore && !s.loadingMore,
+        ),
+      ),
+    );
+    if (v.loadingMore) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2.5),
+          ),
+        ),
+      );
+    }
+    if (v.showMore) {
+      return Padding(
+        padding: const EdgeInsets.all(8),
+        child: TextButton(
+          onPressed: () =>
+              ref.read(chatListControllerProvider.notifier).loadMore(),
+          child: const Text('Cargar más chats'),
+        ),
+      );
+    }
+    return const SizedBox(height: 8);
   }
 }
 
@@ -959,98 +1103,115 @@ class _Skeleton extends StatelessWidget {
 /// Resultados del modo "Todo": sección Clientes (nombre / teléfono / patente)
 /// y sección Mensajes (texto libre, con el fragmento que coincidió).
 class _GlobalResults extends ConsumerWidget {
-  const _GlobalResults({
-    required this.state,
-    required this.onRefresh,
-    required this.onOpen,
-  });
+  const _GlobalResults({required this.onRefresh, required this.onOpen});
 
-  final ChatListState state;
   final Future<void> Function() onRefresh;
   final ValueChanged<Chat> onOpen;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final search = ref.watch(chatSearchControllerProvider);
+    // Solo los subfiltros locales afectan lo que se muestra de la lista.
+    final filters = ref.watch(
+      chatListControllerProvider.select((s) => s.filters),
+    );
     final ctrl = ref.read(chatSearchControllerProvider.notifier);
-    final clients = state.filters.isActive
-        ? search.clients.items.where(state.filters.matches).toList()
+    final clients = filters.isActive
+        ? search.clients.items.where(filters.matches).toList()
         : search.clients.items;
-    final messages = state.filters.isActive
-        ? search.messages.items.where(state.filters.matches).toList()
+    final messages = filters.isActive
+        ? search.messages.items.where(filters.matches).toList()
         : search.messages.items;
     final retry = ref.read(chatListControllerProvider.notifier).reload;
 
+    Widget note(
+      SearchSection section,
+      String loadingLabel,
+      String emptyText,
+      String errorText,
+      bool isEmpty,
+    ) => _SectionBody(
+      section: section,
+      loadingLabel: loadingLabel,
+      emptyText: emptyText,
+      errorText: errorText,
+      onRetry: retry,
+      isEmpty: isEmpty,
+      children: const [],
+    );
+
+    // Filas planas construidas de forma perezosa (ListView.builder).
+    final rows = <Widget Function()>[
+      () => _SectionHeader(
+        'Clientes',
+        count: clients.length,
+        show: search.clients.status == SectionStatus.data,
+      ),
+      if (search.clients.status == SectionStatus.data && clients.isNotEmpty)
+        for (final c in clients) () => ChatTile(chat: c, onTap: () => onOpen(c))
+      else
+        () => note(
+          search.clients,
+          'Buscando clientes',
+          'Ningún cliente coincide con «${search.query}».',
+          'No pudimos buscar clientes.',
+          clients.isEmpty,
+        ),
+      () => _SectionHeader(
+        'Mensajes',
+        count: messages.length,
+        show: search.messages.status == SectionStatus.data,
+      ),
+      if (search.messages.status == SectionStatus.data &&
+          messages.isNotEmpty) ...[
+        for (final c in messages)
+          () => MessageResultTile(
+            chat: c,
+            query: search.query,
+            onTap: () => onOpen(c),
+          ),
+        if (search.messages.loadingMore)
+          () => const Padding(
+            padding: EdgeInsets.all(16),
+            child: Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+            ),
+          )
+        else if (search.messages.hasMore)
+          () => Padding(
+            padding: const EdgeInsets.all(8),
+            child: Center(
+              child: TextButton(
+                onPressed: ctrl.loadMoreMessages,
+                child: Text(
+                  search.messages.moreFailed
+                      ? 'No pudimos cargar más. Reintentar'
+                      : 'Cargar más mensajes',
+                ),
+              ),
+            ),
+          ),
+      ] else
+        () => note(
+          search.messages,
+          'Buscando en los mensajes',
+          'Ningún mensaje coincide con «${search.query}».',
+          'No pudimos buscar en los mensajes.',
+          messages.isEmpty,
+        ),
+    ];
+
     return RefreshIndicator(
       onRefresh: onRefresh,
-      child: ListView(
+      child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.only(bottom: 16),
-        children: [
-          _SectionHeader(
-            'Clientes',
-            count: clients.length,
-            show: search.clients.status == SectionStatus.data,
-          ),
-          _SectionBody(
-            section: search.clients,
-            loadingLabel: 'Buscando clientes',
-            emptyText: 'Ningún cliente coincide con «${search.query}».',
-            errorText: 'No pudimos buscar clientes.',
-            onRetry: retry,
-            isEmpty: clients.isEmpty,
-            children: [
-              for (final c in clients)
-                ChatTile(chat: c, onTap: () => onOpen(c)),
-            ],
-          ),
-          _SectionHeader(
-            'Mensajes',
-            count: messages.length,
-            show: search.messages.status == SectionStatus.data,
-          ),
-          _SectionBody(
-            section: search.messages,
-            loadingLabel: 'Buscando en los mensajes',
-            emptyText: 'Ningún mensaje coincide con «${search.query}».',
-            errorText: 'No pudimos buscar en los mensajes.',
-            onRetry: retry,
-            isEmpty: messages.isEmpty,
-            children: [
-              for (final c in messages)
-                MessageResultTile(
-                  chat: c,
-                  query: search.query,
-                  onTap: () => onOpen(c),
-                ),
-              if (search.messages.loadingMore)
-                const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Center(
-                    child: SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(strokeWidth: 2.5),
-                    ),
-                  ),
-                )
-              else if (search.messages.hasMore)
-                Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: Center(
-                    child: TextButton(
-                      onPressed: ctrl.loadMoreMessages,
-                      child: Text(
-                        search.messages.moreFailed
-                            ? 'No pudimos cargar más. Reintentar'
-                            : 'Cargar más mensajes',
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ],
+        itemCount: rows.length,
+        itemBuilder: (_, i) => rows[i](),
       ),
     );
   }

@@ -29,5 +29,21 @@ void main() {
       expect(decodeJwtPayload('no-es-un-jwt'), isEmpty);
       expect(decodeJwtPayload('a.%%%.c'), isEmpty);
     });
+
+    test('devuelve vacío con string vacío', () {
+      expect(decodeJwtPayload(''), isEmpty);
+    });
+
+    test('devuelve vacío si el payload es JSON pero no un objeto', () {
+      final p = base64Url.encode(utf8.encode('[1,2]')).replaceAll('=', '');
+      expect(decodeJwtPayload('x.$p.y'), isEmpty);
+    });
+
+    test('acepta un token de solo dos partes (sin firma)', () {
+      final p = base64Url
+          .encode(utf8.encode(jsonEncode({'a': 1})))
+          .replaceAll('=', '');
+      expect(decodeJwtPayload('x.$p')['a'], 1);
+    });
   });
 }

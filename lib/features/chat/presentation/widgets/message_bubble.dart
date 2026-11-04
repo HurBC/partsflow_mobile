@@ -1,4 +1,6 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import '../utils/image_sizing.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.dart';
@@ -200,7 +202,12 @@ class MessageBubble extends StatelessWidget {
         else if (message.localPath != null)
           LocalMediaView(message: message, color: fg)
         else if (isImage)
-          _ImageContent(url: message.mediaUrl!, bg: pf.divider)
+          _ImageContent(
+            url: message.mediaUrl!,
+            cacheKey:
+                'msg-img-${message.mediaId ?? message.messageId ?? message.id}',
+            bg: pf.divider,
+          )
         else
           switch (message.type) {
             'audio' || 'ptt' || 'voice'
@@ -471,11 +478,13 @@ class _JuliaAvatar extends StatelessWidget {
           curve: Curves.easeOutBack,
           builder: (context, scale, child) =>
               Transform.scale(scale: scale, child: child),
-          child: TweenAnimationBuilder<double>(
-            tween: Tween(begin: 1, end: 0),
-            duration: const Duration(milliseconds: 1200),
-            curve: Curves.easeOutCubic,
-            builder: (context, t, _) => avatar(t),
+          child: RepaintBoundary(
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 1, end: 0),
+              duration: const Duration(milliseconds: 1200),
+              curve: Curves.easeOutCubic,
+              builder: (context, t, _) => avatar(t),
+            ),
           ),
         ),
       ],
@@ -605,9 +614,14 @@ class _TypeChip extends StatelessWidget {
 }
 
 class _ImageContent extends StatelessWidget {
-  const _ImageContent({required this.url, required this.bg});
+  const _ImageContent({
+    required this.url,
+    required this.cacheKey,
+    required this.bg,
+  });
 
   final String url;
+  final String cacheKey;
   final Color bg;
 
   @override
@@ -615,7 +629,7 @@ class _ImageContent extends StatelessWidget {
     final pf = PfColors.of(context);
     Widget placeholder(IconData icon) => Container(
       width: 200,
-      height: 120,
+      height: 150,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: bg,
@@ -633,9 +647,11 @@ class _ImageContent extends StatelessWidget {
             children: [
               Center(
                 child: InteractiveViewer(
-                  child: Image.network(
-                    url,
-                    errorBuilder: (_, _, _) => const Icon(
+                  child: CachedNetworkImage(
+                    imageUrl: url,
+                    cacheKey: cacheKey,
+                    memCacheWidth: kMaxFullscreenDecodePx,
+                    errorWidget: (_, _, _) => const Icon(
                       Icons.broken_image_outlined,
                       color: Colors.white70,
                       size: 48,
@@ -660,14 +676,15 @@ class _ImageContent extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: Image.network(
-          url,
+        child: CachedNetworkImage(
+          imageUrl: url,
+          cacheKey: cacheKey,
           width: 200,
           height: 150,
+          memCacheWidth: decodePx(context, 200),
           fit: BoxFit.cover,
-          loadingBuilder: (_, child, progress) =>
-              progress == null ? child : placeholder(Icons.image_outlined),
-          errorBuilder: (_, _, _) => placeholder(Icons.broken_image_outlined),
+          placeholder: (_, _) => placeholder(Icons.image_outlined),
+          errorWidget: (_, _, _) => placeholder(Icons.broken_image_outlined),
         ),
       ),
     );

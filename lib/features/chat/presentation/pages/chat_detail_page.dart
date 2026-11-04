@@ -7,15 +7,20 @@ import 'package:go_router/go_router.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
 import 'package:partsflow_mobile/core/router/app_routes.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/realtime/chat_poll_policy.dart';
 import 'package:partsflow_mobile/core/utils/foreground_poller.dart';
 import 'package:partsflow_mobile/core/utils/pf_log.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/chat_key.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/send_outcome.dart';
+import 'package:partsflow_mobile/features/chat/presentation/providers/open_chat_provider.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_thread_controller.dart';
+import 'package:partsflow_mobile/features/chat/presentation/providers/thread_view_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.dart';
+import 'package:partsflow_mobile/features/chat/presentation/utils/timeline.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_actions_sheet.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_client_sheets.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_common.dart';
@@ -25,25 +30,6 @@ import 'package:partsflow_mobile/features/chat/presentation/widgets/message_bubb
 import 'package:partsflow_mobile/features/chat/presentation/widgets/swipe_to_reply.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/templates_sheet.dart';
 import 'package:partsflow_mobile/features/orders/domain/entities/order.dart';
-
-sealed class _Entry {
-  const _Entry();
-}
-
-class _Day extends _Entry {
-  const _Day(this.date);
-  final DateTime date;
-}
-
-class _Msg extends _Entry {
-  const _Msg(this.message);
-  final Message message;
-}
-
-class _Note extends _Entry {
-  const _Note(this.note);
-  final ThreadNote note;
-}
 
 class ChatDetailPage extends ConsumerStatefulWidget {
   const ChatDetailPage({super.key, required this.chat});
@@ -57,7 +43,7 @@ class ChatDetailPage extends ConsumerStatefulWidget {
 class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
   final _scroll = ScrollController();
   final _keys = <String, GlobalKey>{};
-  List<_Entry> _lastEntries = const [];
+  List<TimelineEntry> _lastEntries = const [];
   late final ForegroundPoller _poller;
   final _composerFocus = FocusNode();
 
@@ -75,25 +61,30 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
   String? _flashId;
   int _flashSerial = 0;
   Timer? _flashTimer;
+  late final OpenChatRegistry _openChat;
 
   @override
   void initState() {
     super.initState();
+    _openChat = ref.read(openChatRegistryProvider);
+    _openChat.open(widget.chat.id);
     _scroll.addListener(() {
       // Lista invertida: "después" = mensajes más antiguos.
       if (_scroll.hasClients && _scroll.position.extentAfter < 300) {
-        ref.read(chatThreadProvider(widget.chat).notifier).loadOlder();
+        ref.read(chatThreadProvider(ChatKey(widget.chat)).notifier).loadOlder();
       }
     });
     _poller = ForegroundPoller(
-      interval: Duration(seconds: ref.read(realtimeProvider) ? 30 : 10),
+      interval: chatThreadPollEvery(healthy: ref.read(realtimeProvider)),
       isEnabled: () => mounted,
-      onTick: () => ref.read(chatThreadProvider(widget.chat).notifier).poll(),
+      onTick: () =>
+          ref.read(chatThreadProvider(ChatKey(widget.chat)).notifier).poll(),
     )..start();
   }
 
   @override
   void dispose() {
+    _openChat.close(widget.chat.id);
     _poller.dispose();
     _flashTimer?.cancel();
     _composerFocus.dispose();
@@ -125,12 +116,13 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
 
   Future<void> _toggleJulia(bool current) async {
     final r = await ref
-        .read(chatThreadProvider(widget.chat).notifier)
+        .read(chatThreadProvider(ChatKey(widget.chat)).notifier)
         .setJulia(!current);
     _snack(r.message);
   }
 
-  Future<void> _openActions(ThreadState s) async {
+  Future<void> _openActions() async {
+    final s = ref.read(chatThreadProvider(ChatKey(widget.chat)));
     final me = ref.read(apiUserProvider).value;
     final action = await showChatActionsSheet(
       context,
@@ -152,7 +144,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
       default:
         break;
     }
-    final c = ref.read(chatThreadProvider(widget.chat).notifier);
+    final c = ref.read(chatThreadProvider(ChatKey(widget.chat)).notifier);
     final r = switch (action) {
       ChatAction.assign => await c.assignToMe(),
       ChatAction.release => await c.release(),
@@ -174,7 +166,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
 
   /// Acción "Responder" (menú y deslizar): cita el mensaje y enfoca el composer.
   void _reply(Message m) {
-    ref.read(chatThreadProvider(widget.chat).notifier).setReply(m);
+    ref.read(chatThreadProvider(ChatKey(widget.chat)).notifier).setReply(m);
     _composerFocus.requestFocus();
   }
 
@@ -220,13 +212,13 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
   bool _jumping = false;
 
   Message? _findQuoted(String wid) => ref
-      .read(chatThreadProvider(widget.chat))
+      .read(chatThreadProvider(ChatKey(widget.chat)))
       .messages
       .where((m) => m.id == wid || m.websocketId == wid || m.messageId == wid)
       .firstOrNull;
 
   int _entryIndex(String id) =>
-      _lastEntries.indexWhere((e) => e is _Msg && e.message.id == id);
+      _lastEntries.indexWhere((e) => e is MsgEntry && e.message.id == id);
 
   /// Alto promedio de los ítems construidos (estimación para la lista perezosa).
   double _avgExtent() {
@@ -254,10 +246,14 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     var idx = -1;
     try {
       var target = _findQuoted(wid);
-      final controller = ref.read(chatThreadProvider(widget.chat).notifier);
+      final controller = ref.read(
+        chatThreadProvider(ChatKey(widget.chat)).notifier,
+      );
       if (target == null) _snack('Buscando mensaje original…');
       while (target == null && pages < 5 && mounted) {
-        if (!ref.read(chatThreadProvider(widget.chat)).hasMoreOlder) break;
+        if (!ref.read(chatThreadProvider(ChatKey(widget.chat))).hasMoreOlder) {
+          break;
+        }
         await controller.loadOlder();
         pages++;
         await WidgetsBinding.instance.endOfFrame;
@@ -310,7 +306,9 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     int? best;
     for (var i = 0; i < _lastEntries.length; i++) {
       final e = _lastEntries[i];
-      if (e is! _Msg || _keys[e.message.id]?.currentContext == null) continue;
+      if (e is! MsgEntry || _keys[e.message.id]?.currentContext == null) {
+        continue;
+      }
       if (best == null || (i - idx).abs() < (best - idx).abs()) best = i;
     }
     return best;
@@ -328,52 +326,78 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     });
   }
 
-  String _sig(Message m) => '${m.hasMedia}|${(m.text ?? '').trim()}';
-
-  /// Detecta mensajes que aparecen después de cargado el hilo. Nuevo =
-  /// id desconocido y (local, o más reciente que todo lo conocido): así las
-  /// páginas antiguas nunca cuentan. Un mensaje del servidor que confirma uno
-  /// local (misma firma) no se anima otra vez.
-  void _classify(ThreadState s) {
+  /// Detecta mensajes que aparecen después de cargado el hilo (ver
+  /// [classifyMessages]). Se llama una vez por cambio real de la timeline.
+  void _classify(ThreadTimelineInput s) {
     if (!s.historyLoaded) return;
-    final all = [...s.messages, ...s.pending];
     final now = DateTime.now();
-    _localSigs.removeWhere(
-      (e) => now.difference(e.at) > const Duration(minutes: 2),
+    final r = classifyMessages(
+      all: [...s.messages, ...s.pending],
+      baselined: _baselined,
+      known: _known,
+      localSigs: _localSigs,
+      newest: _newest,
+      now: now,
     );
-    if (!_baselined) {
-      _baselined = true;
-      for (final m in all) {
-        _known.add(m.id);
-        if (_newest == null || m.date.isAfter(_newest!)) _newest = m.date;
+    _baselined = r.baselined;
+    _newest = r.newest;
+    r.entered.forEach((id, kind) {
+      _enter[id] = (
+        kind: kind == EntranceKind.own
+            ? MessageEntranceKind.own
+            : MessageEntranceKind.incoming,
+        at: now,
+      );
+    });
+  }
+
+  /// Poda los mapas/sets por id a los mensajes presentes en [entries] (evita
+  /// crecimiento sin límite). Los ids ausentes no tienen widget montado.
+  void _prune(List<TimelineEntry> entries) {
+    final present = <String>{
+      for (final e in entries)
+        if (e is MsgEntry) e.message.id,
+    };
+    _keys.removeWhere((id, _) => !present.contains(id));
+    _known.retainAll(present);
+    _played.retainAll(present);
+    _enter.removeWhere((id, _) => !present.contains(id));
+  }
+
+  /// Memo de la timeline ya clasificada (por identidad de la lista).
+  List<TimelineEntry>? _classifiedFor;
+  Map<String, int> _entryIndexByKeyCache = const {};
+  List<ValueKey<String>> _entryKeysCache = const [];
+
+  void _onTimeline(List<TimelineEntry> entries) {
+    if (identical(_classifiedFor, entries)) return;
+    _classifiedFor = entries;
+    _lastEntries = entries;
+    _classify(ref.read(threadTimelineInputProvider(ChatKey(widget.chat))));
+    _prune(entries);
+    // Key estable por entrada para que Flutter case filas por identidad.
+    final entryKeys = <ValueKey<String>>[];
+    final indexByKey = <Object, int>{};
+    for (var k = 0; k < entries.length; k++) {
+      final base = switch (entries[k]) {
+        DayEntry(:final date) => 'd:${date.year}-${date.month}-${date.day}',
+        NoteEntry(:final note) =>
+          'n:${note.date.microsecondsSinceEpoch}:${note.text.hashCode}',
+        MsgEntry(:final message) => 'm:${message.id}',
+      };
+      // Evita claves duplicadas entre hermanos (p. ej. notas idénticas).
+      var key = ValueKey<String>(base);
+      for (var dup = 1; indexByKey.containsKey(key); dup++) {
+        key = ValueKey<String>('$base#$dup');
       }
-      return;
+      entryKeys.add(key);
+      indexByKey[key] = k;
     }
-    final base = _newest;
-    for (final m in all) {
-      if (!_known.add(m.id)) continue;
-      if (m.isLocal) {
-        _localSigs.add((sig: _sig(m), at: now));
-        _enter[m.id] = (kind: MessageEntranceKind.own, at: now);
-        continue;
-      }
-      if (base != null && !m.date.isAfter(base)) continue;
-      if (m.isOutbound) {
-        var i = _localSigs.indexWhere((e) => e.sig == _sig(m));
-        // Media: el tipo/leyenda local puede diferir del confirmado.
-        if (i < 0 && m.hasMedia) {
-          i = _localSigs.indexWhere((e) => e.sig.startsWith('true|'));
-        }
-        if (i >= 0) {
-          _localSigs.removeAt(i);
-          continue;
-        }
-      }
-      _enter[m.id] = (kind: MessageEntranceKind.incoming, at: now);
-    }
-    for (final m in all) {
-      if (_newest == null || m.date.isAfter(_newest!)) _newest = m.date;
-    }
+    _entryKeysCache = entryKeys;
+    _entryIndexByKeyCache = {
+      for (final e in indexByKey.entries)
+        (e.key as ValueKey<String>).value: e.value,
+    };
   }
 
   /// true una sola vez por mensaje, mientras la detección sea reciente.
@@ -385,103 +409,107 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     return e.kind;
   }
 
-  List<_Entry> _timeline(ThreadState s) {
-    final all = <({DateTime date, _Entry entry})>[
-      for (final m in s.messages) (date: m.date, entry: _Msg(m)),
-      for (final m in s.pending) (date: m.date, entry: _Msg(m)),
-      for (final n in s.notes) (date: n.date, entry: _Note(n)),
-    ]..sort((a, b) => a.date.compareTo(b.date));
-
-    final asc = <_Entry>[];
-    DateTime? lastDay;
-    for (final e in all) {
-      if (lastDay == null || !sameDay(lastDay, e.date)) {
-        asc.add(_Day(e.date));
-        lastDay = e.date;
-      }
-      asc.add(e.entry);
-    }
-    return asc.reversed.toList();
-  }
-
-  /// ¿El mensaje de `entries[j]` es del mismo remitente que [m] y ≤ 2 min de
-  /// distancia, sin separador de día ni nota entre medio?
-  bool _joined(List<_Entry> entries, int j, Message m, String? myId) {
-    if (j < 0 || j >= entries.length) return false;
-    final o = entries[j];
-    if (o is! _Msg) return false;
-    final other = o.message;
-    if (other.isDeleted != m.isDeleted) return false;
-    final a = m.author(myId);
-    if (a != other.author(myId)) return false;
-    if (a != MessageAuthor.client &&
-        (m.senderName ?? m.agent) != (other.senderName ?? other.agent)) {
-      return false;
-    }
-    return m.date.difference(other.date).abs() <= const Duration(minutes: 2);
-  }
-
   @override
   Widget build(BuildContext context) {
     final pf = PfColors.of(context);
-    final s = ref.watch(chatThreadProvider(widget.chat));
+    final key = ChatKey(widget.chat);
     _poller.setInterval(
-      Duration(seconds: ref.watch(realtimeProvider) ? 30 : 10),
+      chatThreadPollEvery(healthy: ref.watch(realtimeProvider)),
     );
     final applies = ref.watch(windowAppliesProvider).value ?? false;
-    final me = ref.watch(apiUserProvider).value;
-    final myId = me?.id;
-
-    final lastInbound = s.lastInboundAt;
-    final windowClosed =
-        applies &&
-        s.historyLoaded &&
-        (lastInbound == null ||
-            DateTime.now().difference(lastInbound) >=
-                const Duration(hours: 24));
+    final myId = ref.watch(apiUserProvider.select((u) => u.value?.id));
 
     return Scaffold(
       backgroundColor: pf.bg,
       body: Column(
         children: [
-          _Header(
-            state: s,
-            myUserId: myId,
-            onBack: _back,
-            onToggleJulia: () => _toggleJulia(s.chat.client?.juliaOn ?? false),
-            onMore: () => _openActions(s),
-            onCopyPhone: () => _copyPhone(s.chat.phone),
+          Consumer(
+            builder: (context, ref, _) {
+              final chat = ref.watch(
+                chatThreadProvider(key).select((s) => s.chat),
+              );
+              return _Header(
+                chat: chat,
+                myUserId: myId,
+                onBack: _back,
+                onToggleJulia: () =>
+                    _toggleJulia(chat.client?.juliaOn ?? false),
+                onMore: _openActions,
+                onCopyPhone: () => _copyPhone(chat.phone),
+              );
+            },
           ),
-          if (s.order != null)
-            _OrderStrip(
-              order: s.order!,
-              onTap: () {
-                final id = int.tryParse(s.order!.id);
-                if (id == null) return _snack('No pudimos abrir el pedido');
-                context.push(AppRoutes.orderDetail(id));
-              },
+          Consumer(
+            builder: (context, ref, _) {
+              final order = ref.watch(
+                chatThreadProvider(key).select((s) => s.order),
+              );
+              if (order == null) return const SizedBox.shrink();
+              return _OrderStrip(
+                order: order,
+                onTap: () {
+                  final id = int.tryParse(order.id);
+                  if (id == null) return _snack('No pudimos abrir el pedido');
+                  context.push(AppRoutes.orderDetail(id));
+                },
+              );
+            },
+          ),
+          Expanded(
+            child: Consumer(
+              builder: (context, ref, _) => _buildBody(ref, myId),
             ),
-          Expanded(child: _buildBody(s, myId)),
-          if (windowClosed)
-            _WindowNotice(
-              onTemplate: () => pickAndSendTemplate(context, ref, widget.chat),
-            )
-          else
-            ChatComposer(
-              chat: widget.chat,
-              templatesEnabled: applies,
-              focusNode: _composerFocus,
-            ),
+          ),
+          Consumer(
+            builder: (context, ref, _) {
+              final w = ref.watch(
+                chatThreadProvider(key).select(
+                  (s) => (
+                    historyLoaded: s.historyLoaded,
+                    lastInbound: s.lastInboundAt,
+                  ),
+                ),
+              );
+              final windowClosed =
+                  applies &&
+                  w.historyLoaded &&
+                  (w.lastInbound == null ||
+                      DateTime.now().difference(w.lastInbound!) >=
+                          const Duration(hours: 24));
+              if (windowClosed) {
+                return _WindowNotice(
+                  onTemplate: () =>
+                      pickAndSendTemplate(context, ref, widget.chat),
+                );
+              }
+              return ChatComposer(
+                chat: widget.chat,
+                templatesEnabled: applies,
+                focusNode: _composerFocus,
+              );
+            },
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildBody(ThreadState s, String? myId) {
+  Widget _buildBody(WidgetRef ref, String? myId) {
     final pf = PfColors.of(context);
-    final controller = ref.read(chatThreadProvider(widget.chat).notifier);
+    final key = ChatKey(widget.chat);
+    final controller = ref.read(chatThreadProvider(key).notifier);
+    final st = ref.watch(
+      chatThreadProvider(key).select(
+        (s) => (
+          status: s.status,
+          error: s.error,
+          loadingOlder: s.loadingOlder,
+          noMessages: s.messages.isEmpty,
+        ),
+      ),
+    );
 
-    if (s.status == ListStatus.loading && s.messages.isEmpty) {
+    if (st.status == ListStatus.loading && st.noMessages) {
       return Center(
         child: Semantics(
           label: 'Cargando mensajes',
@@ -489,16 +517,17 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
         ),
       );
     }
-    if (s.status == ListStatus.error && s.messages.isEmpty) {
+    if (st.status == ListStatus.error && st.noMessages) {
       return ErrorState(
-        message: s.error ?? 'No pudimos cargar la conversación.',
+        message: st.error ?? 'No pudimos cargar la conversación.',
         onRetry: controller.retry,
       );
     }
 
-    _classify(s);
-    final entries = _timeline(s);
-    _lastEntries = entries;
+    final entries = ref.watch(threadTimelineProvider(key));
+    _onTimeline(entries);
+    final entryKeys = _entryKeysCache;
+    final indexByKey = _entryIndexByKeyCache;
     final reduce = MediaQuery.disableAnimationsOf(context);
     if (entries.isEmpty) {
       return Center(
@@ -517,10 +546,13 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
         controller: _scroll,
         reverse: true,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-        itemCount: entries.length + (s.loadingOlder ? 1 : 0),
+        itemCount: entries.length + (st.loadingOlder ? 1 : 0),
+        findChildIndexCallback: (key) =>
+            key is ValueKey<String> ? indexByKey[key.value] : null,
         itemBuilder: (context, i) {
           if (i >= entries.length) {
             return const Padding(
+              key: ValueKey<String>('loading-older'),
               padding: EdgeInsets.all(12),
               child: Center(
                 child: SizedBox(
@@ -534,10 +566,11 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
           final e = entries[i];
           // `entries` va de nuevo a antiguo: i+1 es el vecino anterior.
           final joinedPrev =
-              e is _Msg && _joined(entries, i + 1, e.message, myId);
+              e is MsgEntry && messagesJoined(entries, i + 1, e.message, myId);
           final joinedNext =
-              e is _Msg && _joined(entries, i - 1, e.message, myId);
+              e is MsgEntry && messagesJoined(entries, i - 1, e.message, myId);
           return Padding(
+            key: entryKeys[i],
             padding: EdgeInsets.fromLTRB(
               0,
               joinedPrev ? 1 : 4,
@@ -545,14 +578,14 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
               joinedNext ? 1 : 4,
             ),
             child: switch (e) {
-              _Day(:final date) => _DayChip(label: dayLabel(date)),
-              _Note(:final note) => Center(
+              DayEntry(:final date) => _DayChip(label: dayLabel(date)),
+              NoteEntry(:final note) => Center(
                 child: Text(
                   note.text,
                   style: TextStyle(fontSize: 12, color: pf.text2),
                 ),
               ),
-              _Msg(:final message) => _messageRow(
+              MsgEntry(:final message) => _messageRow(
                 message,
                 myId,
                 controller,
@@ -615,7 +648,7 @@ extension on _ChatDetailPageState {
 
 class _Header extends StatelessWidget {
   const _Header({
-    required this.state,
+    required this.chat,
     required this.myUserId,
     required this.onBack,
     required this.onToggleJulia,
@@ -623,7 +656,7 @@ class _Header extends StatelessWidget {
     required this.onCopyPhone,
   });
 
-  final ThreadState state;
+  final Chat chat;
   final String? myUserId;
   final VoidCallback onBack;
   final VoidCallback onToggleJulia;
@@ -634,7 +667,6 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     final pf = PfColors.of(context);
     final theme = Theme.of(context);
-    final chat = state.chat;
     final client = chat.client;
     final responsible = client?.responsible;
     final owner = responsible == null

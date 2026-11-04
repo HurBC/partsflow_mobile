@@ -9,6 +9,7 @@ import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/chat_key.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachment.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/quick_answer.dart';
@@ -62,7 +63,8 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
   Timer? _ticker;
   bool _busy = false;
 
-  ChatThread get _thread => ref.read(chatThreadProvider(widget.chat).notifier);
+  ChatThread get _thread =>
+      ref.read(chatThreadProvider(ChatKey(widget.chat)).notifier);
 
   @override
   void initState() {
@@ -164,6 +166,8 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       final x = await _picker.pickImage(
         source: ImageSource.camera,
         imageQuality: 85,
+        maxWidth: 2048,
+        maxHeight: 2048,
       );
       if (x == null) return;
       await _preview([
@@ -184,6 +188,8 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       final xs = await _picker.pickMultipleMedia(
         limit: ChatThread.maxBatch,
         imageQuality: 85,
+        maxWidth: 2048,
+        maxHeight: 2048,
       );
       if (xs.isEmpty) return;
       final files = <OutgoingAttachment>[];
@@ -255,7 +261,7 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       initialCaption: caption,
     );
     if (res == null || !mounted) return false;
-    unawaited(_thread.sendAttachments(res.files, res.caption));
+    unawaited(_sendAndClean(res.files, res.caption));
     return true;
   }
 
@@ -429,6 +435,23 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
     }
   }
 
+  /// Envía y, si la subida terminó bien, borra los temporales propios
+  /// (pf_rec_*, pegado-*, pf_qa_*). Si el mensaje quedó en error se conservan
+  /// para poder reintentar (el purgado por antigüedad los limpia después).
+  Future<void> _sendAndClean(
+    List<OutgoingAttachment> files,
+    String caption,
+  ) async {
+    try {
+      final sent = await _thread.sendAttachments(files, caption);
+      for (final p in ownTempsToDelete(files.map((f) => f.path), sent)) {
+        await deleteOwnTemp(p);
+      }
+    } catch (_) {
+      // Ante la duda se conserva el archivo.
+    }
+  }
+
   Future<void> _sendRecording() async {
     if (_stopping) return;
     _stopping = true;
@@ -461,7 +484,7 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       final name =
           'audio-${DateTime.now().millisecondsSinceEpoch}.${_recFormat.ext}';
       unawaited(
-        _thread.sendAttachments([
+        _sendAndClean([
           OutgoingAttachment(
             path: path,
             name: name,
@@ -507,7 +530,7 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
     Duration motion(int ms) =>
         reduce ? Duration.zero : Duration(milliseconds: ms);
     final reply = ref.watch(
-      chatThreadProvider(widget.chat).select((s) => s.replyTo),
+      chatThreadProvider(ChatKey(widget.chat)).select((s) => s.replyTo),
     );
     final slash =
         _controller.text.startsWith('/') &&
@@ -938,3 +961,11 @@ const _wavFormat = _RecFormat(
   'wav',
   'audio/wav',
 );
+
+/// Paths a borrar tras un envío: solo los confirmados como enviados (nunca los
+/// que fallaron, excedieron el lote o se perdieron al salir del chat).
+@visibleForTesting
+List<String> ownTempsToDelete(Iterable<String> requested, Set<String> sent) => [
+  for (final p in requested.toSet())
+    if (sent.contains(p)) p,
+];

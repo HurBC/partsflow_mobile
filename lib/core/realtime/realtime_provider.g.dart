@@ -49,7 +49,7 @@ final class RealtimeProvider extends $NotifierProvider<Realtime, bool> {
   }
 }
 
-String _$realtimeHash() => r'd0f65d4a615bae2627db2506a9043d08237a618b';
+String _$realtimeHash() => r'9aac69780c19d1612bf6cc6eaff424203a4fe588';
 
 /// Conexión de tiempo real. El estado es "¿hay conexión en tiempo real?".
 /// Conecta tras el login y se cierra con el logout; sin `WS_BASE_URL` /

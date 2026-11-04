@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:partsflow_mobile/core/storage/secure_storage.dart';
 import 'package:partsflow_mobile/core/storage/storage_keys.dart';
+import 'package:partsflow_mobile/core/storage/token_store.dart';
 import 'package:partsflow_mobile/core/utils/jwt_decoder.dart';
 import 'package:partsflow_mobile/core/utils/pf_log.dart';
 
@@ -20,43 +21,66 @@ enum RefreshResult {
 /// body. Responde `{token, access_token}`; el refresh token no rota.
 /// Un solo vuelo a la vez; usa su propio Dio (sin interceptores).
 class TokenRefresher {
-  TokenRefresher({required SecureStorage storage, required String baseUrl})
-    : _storage = storage,
-      _dio = Dio(
-        BaseOptions(
-          baseUrl: baseUrl,
-          connectTimeout: const Duration(seconds: 20),
-          receiveTimeout: const Duration(seconds: 20),
-          sendTimeout: const Duration(seconds: 20),
-          headers: const {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
-        ),
-      );
+  TokenRefresher({
+    required SecureStorage storage,
+    required TokenStore tokens,
+    required String baseUrl,
+    Dio? dio,
+    DateTime Function()? clock,
+  }) : _storage = storage,
+       _tokens = tokens,
+       _clock = clock ?? DateTime.now,
+       _dio =
+           dio ??
+           Dio(
+             BaseOptions(
+               baseUrl: baseUrl,
+               connectTimeout: const Duration(seconds: 20),
+               receiveTimeout: const Duration(seconds: 20),
+               sendTimeout: const Duration(seconds: 20),
+               headers: const {
+                 'Content-Type': 'application/json',
+                 'Accept': 'application/json',
+               },
+             ),
+           );
 
   static const refreshPath = 'users/refresh_token/';
   static const expiryMargin = Duration(seconds: 60);
 
   final SecureStorage _storage;
+  final TokenStore _tokens;
   final Dio _dio;
+  final DateTime Function() _clock;
   Future<RefreshResult>? _inFlight;
 
   /// true si el JWT vence en menos de [expiryMargin] (o ya venció).
   /// Sin claim `exp` legible se asume vigente.
-  static bool isExpiring(String token) {
+  /// [now] permite inyectar el instante actual (por defecto `DateTime.now()`).
+  static bool isExpiring(String token, {DateTime? now}) {
     final exp = decodeJwtPayload(token)['exp'];
     if (exp is! num) return false;
     final expiresAt = DateTime.fromMillisecondsSinceEpoch(
       exp.toInt() * 1000,
       isUtc: true,
     );
-    return expiresAt.difference(DateTime.now().toUtc()) < expiryMargin;
+    return expiresAt.difference((now ?? DateTime.now()).toUtc()) < expiryMargin;
+  }
+
+  /// Igual que [isExpiring] pero usando el reloj inyectado de esta instancia.
+  bool isTokenExpiring(String token) {
+    final exp = _tokens.expSeconds(token);
+    if (exp == null) return false;
+    final expiresAt = DateTime.fromMillisecondsSinceEpoch(
+      exp * 1000,
+      isUtc: true,
+    );
+    return expiresAt.difference(_clock().toUtc()) < expiryMargin;
   }
 
   /// Marca la sesión como vencida: borra todo y deja el aviso para el login.
   Future<void> expireSession() async {
-    await _storage.deleteAll();
+    await _tokens.clear();
     await _storage.write(StorageKeys.sessionExpired, '1');
   }
 
@@ -67,8 +91,8 @@ class TokenRefresher {
   Future<RefreshResult> _run() async {
     pfLog('refresh: inicio');
     try {
-      final token = await _storage.read(StorageKeys.token);
-      final refreshToken = await _storage.read(StorageKeys.refreshToken);
+      final token = await _tokens.readToken();
+      final refreshToken = await _tokens.readRefreshToken();
       if (token == null || refreshToken == null) {
         pfLog('refresh: sin token o refresh token guardado');
         await expireSession();
@@ -86,13 +110,11 @@ class TokenRefresher {
         await expireSession();
         return RefreshResult.rejected;
       }
-      await _storage.write(StorageKeys.token, newToken);
-      final access = res.data?['access_token'] as String?;
-      if (access != null) await _storage.write(StorageKeys.accessToken, access);
-      final rotated = res.data?['refresh_token'] as String?;
-      if (rotated != null) {
-        await _storage.write(StorageKeys.refreshToken, rotated);
-      }
+      await _tokens.saveTokens(
+        token: newToken,
+        accessToken: res.data?['access_token'] as String?,
+        refreshToken: res.data?['refresh_token'] as String?,
+      );
       pfLog('refresh: ok status=${res.statusCode}');
       return RefreshResult.ok;
     } on DioException catch (e) {

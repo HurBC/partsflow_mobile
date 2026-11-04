@@ -18,4 +18,12 @@ class OrderStrip {
   final OrderStage stage;
 
   String get stageLabel => stage.label;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OrderStrip && other.id == id && other.stage == stage;
+
+  @override
+  int get hashCode => Object.hashAll([id, stage]);
 }

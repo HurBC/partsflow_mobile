@@ -4,6 +4,7 @@ import 'package:partsflow_mobile/core/config/app_info.dart';
 import 'package:partsflow_mobile/core/providers/auth_state_provider.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_event.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_session.dart';
+import 'package:partsflow_mobile/core/realtime/resync_coalescer.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
@@ -23,21 +24,24 @@ class Realtime extends _$Realtime {
 
   @override
   bool build() {
-    final auth = ref.watch(authStateProvider);
-    if (auth.isLoading || auth.value != true) return false;
+    if (!ref.watch(sessionActiveProvider)) return false;
     if (wsBaseUrl.isEmpty || wsOrigin.isEmpty) return false;
     final me = ref.watch(currentUserProvider).value;
     // El servidor solo acepta ids en minúscula (hex y guiones).
     final id = me?.subsidiaryId.trim().toLowerCase() ?? '';
     if (!_uuid.hasMatch(id)) return false;
 
+    // Un solo Resync por reconexión (ambos sockets emiten uno al conectar).
+    final coalescer = ResyncCoalescer(
+      sink: (e) {
+        if (ref.mounted && !_events.isClosed) _events.add(e);
+      },
+    );
     final session = RealtimeSession(
       baseUrl: wsBaseUrl,
       origin: wsOrigin,
       subsidiaryId: id,
-      onEvent: (e) {
-        if (ref.mounted && !_events.isClosed) _events.add(e);
-      },
+      onEvent: coalescer.add,
       onConnectedChanged: (v) {
         if (ref.mounted && state != v) state = v;
       },

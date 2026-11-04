@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:partsflow_mobile/core/media/media_cache_purge.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachment.dart';
 import 'package:path_provider/path_provider.dart';
@@ -88,6 +89,49 @@ Future<File?> cachedTemp(String name) async {
   final dir = await getTemporaryDirectory();
   final f = File('${dir.path}/${safeName(name)}');
   return await f.exists() && await f.length() > 0 ? f : null;
+}
+
+/// Directorio de caché de media descargada (`<tmp>/pf_media`).
+Future<Directory> mediaCacheDir() async {
+  final tmp = await getTemporaryDirectory();
+  final d = Directory('${tmp.path}/$mediaCacheDirName');
+  if (!await d.exists()) await d.create(recursive: true);
+  return d;
+}
+
+Future<File> writeMediaCache(
+  Uint8List bytes,
+  String name, {
+  Directory? dir,
+}) async {
+  final d = dir ?? await mediaCacheDir();
+  final f = File('${d.path}/${safeName(name)}');
+  await f.writeAsBytes(bytes, flush: true);
+  return f;
+}
+
+/// Archivo en la caché de media si existe (y toca su mtime para el LRU).
+Future<File?> cachedMedia(String name, {Directory? dir}) async {
+  final d = dir ?? await mediaCacheDir();
+  final f = File('${d.path}/${safeName(name)}');
+  if (!await f.exists() || await f.length() == 0) return null;
+  try {
+    await f.setLastModified(DateTime.now());
+  } catch (_) {}
+  return f;
+}
+
+/// Borra [path] si es un temporal propio (grabación / imagen pegada / QA).
+Future<void> deleteOwnTemp(String path) async {
+  final name = path.split('/').last;
+  if (!(name.startsWith('pf_rec_') ||
+      name.startsWith('pegado-') ||
+      name.startsWith('pf_qa_'))) {
+    return;
+  }
+  try {
+    await File(path).delete();
+  } catch (_) {}
 }
 
 /// true si algún visor del sistema pudo abrirlo.

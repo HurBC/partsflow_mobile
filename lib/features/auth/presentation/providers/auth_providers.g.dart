@@ -48,7 +48,7 @@ final class AuthRepositoryProvider
   }
 }
 
-String _$authRepositoryHash() => r'f1ff4dfdd3cf3f5b1f3a27261b699f7a8011a235';
+String _$authRepositoryHash() => r'cfa78271bc720ccc3af30e789206618d70d66af2';
 
 /// Usuario de la sesión actual (claims del JWT).
 

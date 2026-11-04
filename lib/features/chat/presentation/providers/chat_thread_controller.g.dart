@@ -8,21 +8,21 @@ part of 'chat_thread_controller.dart';
 
 // GENERATED CODE - DO NOT MODIFY BY HAND
 // ignore_for_file: type=lint, type=warning
-/// Conversación de un chat. La clave es el Chat (igualdad por id): la primera
-/// instancia se crea con el Chat recibido por `extra` desde la lista.
+/// Conversación de un chat. La clave es un ChatKey (igualdad por id): la primera
+/// instancia se crea con el snapshot recibido por `extra` desde la lista.
 
 @ProviderFor(ChatThread)
 final chatThreadProvider = ChatThreadFamily._();
 
-/// Conversación de un chat. La clave es el Chat (igualdad por id): la primera
-/// instancia se crea con el Chat recibido por `extra` desde la lista.
+/// Conversación de un chat. La clave es un ChatKey (igualdad por id): la primera
+/// instancia se crea con el snapshot recibido por `extra` desde la lista.
 final class ChatThreadProvider
     extends $NotifierProvider<ChatThread, ThreadState> {
-  /// Conversación de un chat. La clave es el Chat (igualdad por id): la primera
-  /// instancia se crea con el Chat recibido por `extra` desde la lista.
+  /// Conversación de un chat. La clave es un ChatKey (igualdad por id): la primera
+  /// instancia se crea con el snapshot recibido por `extra` desde la lista.
   ChatThreadProvider._({
     required ChatThreadFamily super.from,
-    required Chat super.argument,
+    required ChatKey super.argument,
   }) : super(
          retry: null,
          name: r'chatThreadProvider',
@@ -64,10 +64,10 @@ final class ChatThreadProvider
   }
 }
 
-String _$chatThreadHash() => r'c37ece9f9eb6f52b6d9eb74321b8569c96589674';
+String _$chatThreadHash() => r'9c1cc9a86f8e9a4e40d18b96969f0c1da84b99dc';
 
-/// Conversación de un chat. La clave es el Chat (igualdad por id): la primera
-/// instancia se crea con el Chat recibido por `extra` desde la lista.
+/// Conversación de un chat. La clave es un ChatKey (igualdad por id): la primera
+/// instancia se crea con el snapshot recibido por `extra` desde la lista.
 
 final class ChatThreadFamily extends $Family
     with
@@ -76,7 +76,7 @@ final class ChatThreadFamily extends $Family
           ThreadState,
           ThreadState,
           ThreadState,
-          Chat
+          ChatKey
         > {
   ChatThreadFamily._()
     : super(
@@ -87,24 +87,24 @@ final class ChatThreadFamily extends $Family
         isAutoDispose: true,
       );
 
-  /// Conversación de un chat. La clave es el Chat (igualdad por id): la primera
-  /// instancia se crea con el Chat recibido por `extra` desde la lista.
+  /// Conversación de un chat. La clave es un ChatKey (igualdad por id): la primera
+  /// instancia se crea con el snapshot recibido por `extra` desde la lista.
 
-  ChatThreadProvider call(Chat chat) =>
-      ChatThreadProvider._(argument: chat, from: this);
+  ChatThreadProvider call(ChatKey key) =>
+      ChatThreadProvider._(argument: key, from: this);
 
   @override
   String toString() => r'chatThreadProvider';
 }
 
-/// Conversación de un chat. La clave es el Chat (igualdad por id): la primera
-/// instancia se crea con el Chat recibido por `extra` desde la lista.
+/// Conversación de un chat. La clave es un ChatKey (igualdad por id): la primera
+/// instancia se crea con el snapshot recibido por `extra` desde la lista.
 
 abstract class _$ChatThread extends $Notifier<ThreadState> {
-  late final _$args = ref.$arg as Chat;
-  Chat get chat => _$args;
+  late final _$args = ref.$arg as ChatKey;
+  ChatKey get key => _$args;
 
-  ThreadState build(Chat chat);
+  ThreadState build(ChatKey key);
   @$mustCallSuper
   @override
   void runBuild() {

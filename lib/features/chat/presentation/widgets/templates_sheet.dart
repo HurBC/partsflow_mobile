@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/chat_key.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message_template.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_extras_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_thread_controller.dart';
@@ -28,7 +29,7 @@ Future<void> pickAndSendTemplate(
   if (choice == null || !context.mounted) return;
   final messenger = ScaffoldMessenger.of(context);
   final r = await ref
-      .read(chatThreadProvider(chat).notifier)
+      .read(chatThreadProvider(ChatKey(chat)).notifier)
       .sendTemplate(choice.template, choice.values);
   if (r.message.isEmpty) return;
   messenger

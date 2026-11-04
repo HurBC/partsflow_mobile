@@ -1,29 +1,31 @@
 import 'dart:async';
 
+import 'package:collection/collection.dart';
+import 'package:partsflow_mobile/core/config/perf_flags.dart';
 import 'package:partsflow_mobile/core/errors/failure.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_event.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
 import 'package:partsflow_mobile/core/utils/json_utils.dart';
 import 'package:partsflow_mobile/core/utils/pf_log.dart';
+import 'package:partsflow_mobile/core/utils/reload_gate.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/domain/entities/api_user.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
+import 'package:partsflow_mobile/features/chat/data/mappers/chat_mapper.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/chat_key.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message_template.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachment.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/send_outcome.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/thread_note.dart';
+import 'package:partsflow_mobile/features/chat/domain/logic/messages.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
-part 'chat_thread_controller.g.dart';
+export 'package:partsflow_mobile/features/chat/domain/entities/thread_note.dart';
 
-/// Mensaje de sistema local (p. ej. cambios de Julia).
-class ThreadNote {
-  const ThreadNote(this.date, this.text);
-  final DateTime date;
-  final String text;
-}
+part 'chat_thread_controller.g.dart';
 
 class ThreadState {
   const ThreadState({
@@ -94,32 +96,63 @@ class ThreadState {
     }
     return best;
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ThreadState &&
+          other.chat == chat &&
+          const DeepCollectionEquality().equals(other.messages, messages) &&
+          const DeepCollectionEquality().equals(other.pending, pending) &&
+          const DeepCollectionEquality().equals(other.notes, notes) &&
+          other.status == status &&
+          other.error == error &&
+          other.loadingOlder == loadingOlder &&
+          other.hasMoreOlder == hasMoreOlder &&
+          other.nextPage == nextPage &&
+          other.order == order &&
+          other.historyLoaded == historyLoaded &&
+          other.replyTo == replyTo;
+
+  @override
+  int get hashCode => Object.hashAll([
+    chat,
+    const DeepCollectionEquality().hash(messages),
+    const DeepCollectionEquality().hash(pending),
+    const DeepCollectionEquality().hash(notes),
+    status,
+    error,
+    loadingOlder,
+    hasMoreOlder,
+    nextPage,
+    order,
+    historyLoaded,
+    replyTo,
+  ]);
 }
 
 typedef ActionResult = ({bool ok, String message});
 
-List<Message> _merge(List<Message> a, List<Message> b) {
-  final byId = {for (final m in a) m.id: m};
-  for (final m in b) {
-    byId[m.id] = m;
-  }
-  final out = byId.values.toList()..sort((x, y) => x.date.compareTo(y.date));
-  return out;
-}
-
-/// Conversación de un chat. La clave es el Chat (igualdad por id): la primera
-/// instancia se crea con el Chat recibido por `extra` desde la lista.
+/// Conversación de un chat. La clave es un ChatKey (igualdad por id): la primera
+/// instancia se crea con el snapshot recibido por `extra` desde la lista.
 @riverpod
 class ChatThread extends _$ChatThread {
   int _localSeq = 0;
   Timer? _rtTimer;
+  late ReloadGate _reloadGate;
 
   @override
-  ThreadState build(Chat chat) {
+  ThreadState build(ChatKey key) {
+    final chat = key.initial;
+    // Un gate por build (la instancia del Notifier puede reutilizarse).
+    final gate = _reloadGate = ReloadGate(
+      signalGap: const Duration(milliseconds: 400),
+    );
     final sub = ref.read(realtimeProvider.notifier).events.listen(_onRealtime);
     ref.onDispose(() {
       sub.cancel();
       _rtTimer?.cancel();
+      gate.dispose();
     });
     Future.microtask(() async {
       if (!ref.mounted) return;
@@ -132,15 +165,19 @@ class ChatThread extends _$ChatThread {
 
   Future<ApiUser?> _me() => ref.read(apiUserProvider.future);
 
-  Future<void> _loadFirstPage() async {
+  /// Carga explícita de la primera página (inicial, reintento, tras enviar).
+  Future<void> _loadFirstPage() => _reloadGate.track(_doLoadFirstPage);
+
+  Future<void> _doLoadFirstPage() async {
     final r = await ref
         .read(chatRepositoryProvider)
         .history(state.chat.phone, 0, chatPageSize);
     if (!ref.mounted) return;
     switch (r) {
       case Ok(:final value):
+        _reloadGate.markSuccess();
         state = state.copyWith(
-          messages: _merge(state.messages, value),
+          messages: mergeMessages(state.messages, value),
           status: ListStatus.data,
           historyLoaded: true,
           // Si la primera página vino llena, puede haber más atrás.
@@ -165,10 +202,11 @@ class ChatThread extends _$ChatThread {
     if (ref.mounted) _markReadIfNeeded();
   }
 
-  /// Sondeo: trae la primera página y la mezcla.
+  /// Sondeo automático (poller / primer plano): trae la primera página y la
+  /// mezcla; se omite si hay una carga reciente o en vuelo.
   Future<void> poll() async {
     if (state.status != ListStatus.data) return;
-    await _loadFirstPage();
+    await _reloadGate.auto(_doLoadFirstPage);
   }
 
   // ---- Tiempo real ---------------------------------------------------------
@@ -181,12 +219,12 @@ class ChatThread extends _$ChatThread {
         _scheduleReload();
       case RealtimeNewMessages(:final items):
         // El canal trae los mensajes de todo el subsidiary: solo los de este
-        // chat; si no se puede determinar el teléfono, se recarga por si acaso.
-        final mine = items.where((i) {
-          final p = phoneOfItem(i);
-          return p == null || p == phoneDigits(chat.phone);
-        });
-        if (mine.isNotEmpty) _scheduleReload();
+        // chat; si no se puede determinar el chat, se recarga por si acaso.
+        final mine = items.where((i) => _isForThisChat(i, chat) ?? true);
+        if (mine.isEmpty) return;
+        if (!pfPatchThread || !_patchNewMessages(mine.toList(), items)) {
+          _signalReload();
+        }
       case RealtimeStatusUpdates(:final items):
         _applyStatusUpdates(items);
       case RealtimeClientChanged(:final data):
@@ -194,35 +232,74 @@ class ChatThread extends _$ChatThread {
     }
   }
 
+  /// true/false si el ítem es/no es de [chat]; null si no trae identificador
+  /// comparable. Compara primero el id crudo de chat (chat.id, normalized_chat_id…)
+  /// y luego los dígitos (phoneOfItem prefiere ids de chat sobre `phone`).
+  bool? _isForThisChat(Map<String, dynamic> item, Chat chat) {
+    String norm(String? v) =>
+        (v ?? '').trim().toLowerCase().replaceAll('+', '');
+    final mine = norm(chat.id);
+    for (final k in const ['chat', 'chat_id', 'chatId', 'normalized_chat_id']) {
+      final v = item[k];
+      final raw = norm(v is Map ? asStr(v['id']) : asStr(v));
+      if (raw.isNotEmpty && raw == mine) return true;
+    }
+    final p = phoneOfItem(item);
+    return p == null ? null : p == phoneDigits(chat.phone);
+  }
+
+  /// Aplica los mensajes del evento como parche local. Devuelve false si hay
+  /// que recargar (fallback): chat no cargado aún, ítem sin identificador de
+  /// mensaje usable o no mapeable, o eco de un mensaje propio con envíos en
+  /// curso (el vínculo local<->servidor no es fiable: el evento no trae el id
+  /// local y la recarga + messageId reconcilia).
+  bool _patchNewMessages(
+    List<Map<String, dynamic>> mine,
+    List<Map<String, dynamic>> all,
+  ) {
+    if (state.status != ListStatus.data) return false;
+    // Ítems de dudosa pertenencia (sin identificador de chat) => recargar.
+    if (all.any((i) => _isForThisChat(i, state.chat) == null)) return false;
+    final hasPending = state.pending.any((m) => m.status != 'error');
+    final parsed = <Message>[];
+    for (final i in mine) {
+      if (nonEmpty(asStr(i['message_id'])) == null &&
+          nonEmpty(asStr(i['websocket_id'])) == null) {
+        return false;
+      }
+      final m = messageFromJson(i);
+      if (m == null) return false;
+      if (hasPending && m.isOutbound) return false;
+      parsed.add(m);
+    }
+    final next = applyNewMessages(state.messages, parsed);
+    if (next != null) state = state.copyWith(messages: next);
+    return true;
+  }
+
+  /// Mensajes nuevos de este chat: nunca se pierde, se coalesce.
+  void _signalReload() {
+    _reloadGate.signal(() async {
+      // Si aún no es data hay una carga inicial/reintento (o falló); la carga
+      // inicial ya trae los mensajes nuevos, así que no se pierde la señal.
+      if (!ref.mounted || state.status != ListStatus.data) return;
+      await _doLoadFirstPage();
+    });
+  }
+
   /// Recarga la primera página (mezclada) con un pequeño agrupamiento.
   void _scheduleReload() {
     if (_rtTimer?.isActive ?? false) return;
     _rtTimer = Timer(const Duration(milliseconds: 400), () {
-      if (ref.mounted && state.status == ListStatus.data) _loadFirstPage();
+      if (ref.mounted && state.status == ListStatus.data) {
+        _reloadGate.auto(_doLoadFirstPage);
+      }
     });
   }
 
   void _applyStatusUpdates(List<Map<String, dynamic>> items) {
-    final byId = <String, String>{};
-    for (final i in items) {
-      final id = nonEmpty(asStr(i['websocket_id'])) ?? nonEmpty(asStr(i['id']));
-      final st = nonEmpty(asStr(i['status']));
-      if (id != null && st != null) byId[id] = st;
-    }
-    if (byId.isEmpty) return;
-    var changed = false;
-    final next = [
-      for (final m in state.messages)
-        if ((byId[m.websocketId] ?? byId[m.id]) case final st?
-            when st != m.status)
-          () {
-            changed = true;
-            return m.copyWith(status: st);
-          }()
-        else
-          m,
-    ];
-    if (changed) state = state.copyWith(messages: next);
+    final next = applyStatusUpdates(state.messages, items);
+    if (next != null) state = state.copyWith(messages: next);
   }
 
   void _applyClientEvent(Map<String, dynamic> d) {
@@ -296,7 +373,7 @@ class ChatThread extends _$ChatThread {
         final known = state.messages.map((m) => m.id).toSet();
         final fresh = value.where((m) => !known.contains(m.id)).toList();
         state = state.copyWith(
-          messages: _merge(state.messages, value),
+          messages: mergeMessages(state.messages, value),
           nextPage: s.nextPage + 1,
           // Una página sin mensajes nuevos corta la paginación.
           hasMoreOlder: value.length >= chatPageSize && fresh.isNotEmpty,
@@ -402,14 +479,16 @@ class ChatThread extends _$ChatThread {
   }
 
   /// Un mensaje por archivo (la leyenda solo en el primero). Hasta 3 subidas
-  /// en paralelo; los envíos salen en orden.
-  Future<void> sendAttachments(
+  /// en paralelo; los envíos salen en orden. Devuelve los paths locales de los
+  /// archivos enviados con éxito (los demás se conservan para reintentar).
+  Future<Set<String>> sendAttachments(
     List<OutgoingAttachment> files,
     String caption,
   ) async {
-    if (files.isEmpty) return;
+    final sent = <String>{};
+    if (files.isEmpty) return sent;
     final me = await _me();
-    if (!ref.mounted) return;
+    if (!ref.mounted) return sent;
     final reply = _takeReply();
     final ids = <String>[];
     final locals = <Message>[];
@@ -446,10 +525,11 @@ class ChatThread extends _$ChatThread {
     for (final id in ids) {
       _ensureUploaded(id);
     }
-    for (final id in ids) {
-      if (!ref.mounted) return;
-      await _deliver(id, me);
+    for (var i = 0; i < ids.length; i++) {
+      if (!ref.mounted) return sent;
+      if (await _deliver(ids[i], me)) sent.add(files[i].path);
     }
+    return sent;
   }
 
   /// Reintenta un mensaje local que falló.
@@ -530,11 +610,12 @@ class ChatThread extends _$ChatThread {
     };
   }
 
-  Future<void> _deliver(String localId, ApiUser? me) async {
+  /// true si el mensaje se envió y se confirmó.
+  Future<bool> _deliver(String localId, ApiUser? me) async {
     final job = _jobs[localId];
-    if (job == null) return;
+    if (job == null) return false;
     String? error = await _ensureUploaded(localId);
-    if (!ref.mounted) return;
+    if (!ref.mounted) return false;
     if (error == null) {
       final wasAutomatic = state.chat.client?.operationMode == 'automatic';
       final isAudio = job.file?.kind == AttachmentKind.audio;
@@ -551,7 +632,7 @@ class ChatThread extends _$ChatThread {
                 ? null
                 : (isAudio ? '' : job.file!.name),
           );
-      if (!ref.mounted) return;
+      if (!ref.mounted) return false;
       switch (r) {
         case Ok(:final value):
           switch (value.status) {
@@ -589,15 +670,16 @@ class ChatThread extends _$ChatThread {
         (m) =>
             m.copyWith(status: 'error', errorText: error, clearProgress: true),
       );
-      return;
+      return false;
     }
     await _loadFirstPage();
-    if (!ref.mounted) return;
+    if (!ref.mounted) return false;
     _jobs.remove(localId);
     state = state.copyWith(
       pending: state.pending.where((m) => m.id != localId).toList(),
     );
     ref.read(chatListControllerProvider.notifier).poll();
+    return true;
   }
 
   /// Envía una plantilla (sin mensaje optimista: se ve al recargar).

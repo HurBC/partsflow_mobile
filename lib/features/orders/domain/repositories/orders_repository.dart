@@ -8,6 +8,9 @@ abstract class OrdersRepository {
   /// Número de clientes de una etapa (contador de la pestaña).
   Future<Result<int>> count(OrderStage stage, String? search);
 
+  /// Solo el pedido (resumen/cabecera), sin productos, cotización ni notas.
+  Future<Result<OrderSummary>> order(int id);
+
   Future<Result<OrderDetail>> detail(int id);
 
   Future<Result<MoveOutcome>> move(int id, OrderStage to);

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:partsflow_mobile/core/router/tab_visibility.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:partsflow_mobile/core/router/app_routes.dart';
@@ -29,6 +30,8 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
   late final ForegroundPoller _poller;
   // true mientras el detalle está abierto encima de la lista.
   bool _covered = false;
+  // false mientras otra tab del shell está al frente (la rama sigue viva).
+  bool _tabVisible = true;
 
   @override
   void initState() {
@@ -36,9 +39,24 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
     _scroll.addListener(_onScroll);
     _poller = ForegroundPoller(
       interval: const Duration(seconds: 30),
-      isEnabled: () => mounted && !_covered,
-      onTick: () => ref.read(ordersListControllerProvider.notifier).poll(),
+      isEnabled: () => mounted && !_covered && _tabVisible,
+      onTick: () => ref.read(ordersListControllerProvider.notifier).autoPoll(),
     )..start();
+    Future.microtask(() {
+      if (mounted) ref.read(ordersListControllerProvider.notifier).onTabShown();
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final visible = TabVisibility.isActive(context, 1);
+    if (visible == _tabVisible) return;
+    _tabVisible = visible;
+    // Antes ocurría al recrear la página; ahora la rama se conserva.
+    if (visible && !_covered) {
+      ref.read(ordersListControllerProvider.notifier).onTabShown();
+    }
   }
 
   @override
@@ -72,7 +90,6 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
     await context.push(AppRoutes.orderDetail(order.id), extra: order);
     if (!mounted) return;
     _covered = false;
-    ref.read(ordersListControllerProvider.notifier).poll();
   }
 
   Future<void> _refresh() async {

@@ -1,12 +1,13 @@
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:partsflow_mobile/core/errors/failure.dart';
+import 'package:partsflow_mobile/core/utils/base64_codec.dart';
 import 'package:partsflow_mobile/core/utils/json_utils.dart';
 import 'package:partsflow_mobile/core/utils/pf_log.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/chat/data/datasources/chat_remote_datasource.dart';
+import 'package:partsflow_mobile/features/chat/domain/cancel_signal.dart';
 import 'package:partsflow_mobile/features/chat/data/mappers/chat_mapper.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_extras.dart';
@@ -53,7 +54,10 @@ class ChatRepositoryImpl implements ChatRepository {
   }
 
   @override
-  Future<Result<ChatPage>> searchChats(ChatQuery q) => _guard(() async {
+  Future<Result<ChatPage>> searchChats(
+    ChatQuery q, {
+    CancelSignal? cancel,
+  }) => _guard(() async {
     final p = <String, dynamic>{
       'size': 50,
       'include': 'lastMessage',
@@ -92,7 +96,9 @@ class ChatRepositoryImpl implements ChatRepository {
       if (q.cursorId != null) p['last_message_id'] = q.cursorId;
     }
 
-    final data = await _remote.searchChats(p);
+    final token = CancelToken();
+    cancel?.whenCancelled.then((_) => token.cancel('search superseded'));
+    final data = await _remote.searchChats(p, cancelToken: token);
     final map = asMap(data);
     final rawChats = data is List ? data : asList(map?['chats']);
     final chats = <Chat>[];
@@ -259,18 +265,6 @@ class ChatRepositoryImpl implements ChatRepository {
     return UploadedFile(fileId: id, fileName: asStr(data?['file_name']));
   }
 
-  static Uint8List? _decodeBase64(Object? data) {
-    if (data is! String) return null;
-    var s = data.trim();
-    if (s.startsWith('"') && s.endsWith('"') && s.length >= 2) {
-      s = s.substring(1, s.length - 1);
-    }
-    final comma = s.indexOf(',');
-    if (s.startsWith('data:') && comma >= 0) s = s.substring(comma + 1);
-    s = s.replaceAll(RegExp(r'\s'), '');
-    return base64.decode(base64.normalize(s));
-  }
-
   @override
   Future<Result<MediaPreview>> mediaPreview(
     RemoteMediaKind kind,
@@ -281,7 +275,7 @@ class ChatRepositoryImpl implements ChatRepository {
     final pv = asMap(m?['preview']);
     List<int>? thumb;
     try {
-      thumb = _decodeBase64(pv?['image']);
+      thumb = await decodeBase64Async(pv?['image']);
     } catch (_) {}
     final duration = asDouble(asMap(m?['meta'])?['duration']);
     return MediaPreview(
@@ -296,7 +290,9 @@ class ChatRepositoryImpl implements ChatRepository {
 
   @override
   Future<Result<Uint8List?>> mediaDownload(RemoteMediaKind kind, String id) =>
-      _guard(() async => _decodeBase64(await _remote.mediaDownload(kind, id)));
+      _guard(
+        () async => decodeBase64Async(await _remote.mediaDownload(kind, id)),
+      );
 
   @override
   Future<Result<List<QuickAnswer>>> quickAnswers() => _guard(() async {

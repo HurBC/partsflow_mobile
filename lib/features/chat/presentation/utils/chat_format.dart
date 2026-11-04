@@ -2,6 +2,10 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
+import 'package:partsflow_mobile/features/chat/presentation/utils/day_utils.dart';
+
+export 'package:partsflow_mobile/features/chat/presentation/utils/day_utils.dart'
+    show sameDay;
 
 const _dias = [
   'Lunes',
@@ -32,7 +36,7 @@ String _two(int n) => n.toString().padLeft(2, '0');
 
 String hm(DateTime d) => '${_two(d.hour)}:${_two(d.minute)}';
 
-DateTime _day(DateTime d) => DateTime(d.year, d.month, d.day);
+DateTime _day(DateTime d) => dateOnly(d);
 
 int _daysBetween(DateTime a, DateTime b) => _day(a).difference(_day(b)).inDays;
 
@@ -57,8 +61,6 @@ String dayLabel(DateTime d, {DateTime? now}) {
   final year = d.year == n.year ? '' : ' de ${d.year}';
   return '${d.day} de ${_meses[d.month - 1]}$year';
 }
-
-bool sameDay(DateTime a, DateTime b) => _day(a) == _day(b);
 
 String relativeShort(DateTime d, {DateTime? now}) {
   final diff = (now ?? DateTime.now()).difference(d);

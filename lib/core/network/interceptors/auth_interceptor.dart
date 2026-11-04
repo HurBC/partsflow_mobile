@@ -1,8 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:partsflow_mobile/core/network/token_refresher.dart';
-import 'package:partsflow_mobile/core/storage/secure_storage.dart';
-import 'package:partsflow_mobile/core/storage/storage_keys.dart';
+import 'package:partsflow_mobile/core/storage/token_store.dart';
 import 'package:partsflow_mobile/core/utils/pf_log.dart';
 
 /// Inyecta el JWT y lo renueva: antes de la request si vence en < 60 s, y ante
@@ -10,17 +9,17 @@ import 'package:partsflow_mobile/core/utils/pf_log.dart';
 /// (otro Dio, un solo vuelo), así no pasa por este interceptor.
 class AuthInterceptor extends Interceptor {
   AuthInterceptor({
-    required SecureStorage storage,
+    required TokenStore tokens,
     required TokenRefresher refresher,
     required Dio retryDio,
     this.onSessionExpired,
-  }) : _storage = storage,
+  }) : _tokens = tokens,
        _refresher = refresher,
        _retryDio = retryDio;
 
   static const _retriedKey = 'pf_auth_retried';
 
-  final SecureStorage _storage;
+  final TokenStore _tokens;
   final TokenRefresher _refresher;
   final Dio _retryDio;
   final VoidCallback? onSessionExpired;
@@ -30,10 +29,12 @@ class AuthInterceptor extends Interceptor {
     RequestOptions options,
     RequestInterceptorHandler handler,
   ) async {
-    var token = await _storage.read(StorageKeys.token);
+    var token = await _tokens.readToken();
 
-    if (token != null && TokenRefresher.isExpiring(token)) {
-      pfLog('auth: token por vencer antes de ${options.method} ${options.path}');
+    if (token != null && _refresher.isTokenExpiring(token)) {
+      pfLog(
+        'auth: token por vencer antes de ${options.method} ${options.path}',
+      );
       final result = await _refresher.refresh();
       if (result == RefreshResult.rejected) {
         onSessionExpired?.call();
@@ -45,7 +46,7 @@ class AuthInterceptor extends Interceptor {
           ),
         );
       }
-      token = await _storage.read(StorageKeys.token);
+      token = await _tokens.readToken();
     }
 
     if (token != null) {
@@ -67,7 +68,7 @@ class AuthInterceptor extends Interceptor {
       return handler.next(err);
     }
 
-    final current = await _storage.read(StorageKeys.token);
+    final current = await _tokens.readToken();
     if (current == null) return handler.next(err);
 
     // Si otro request ya renovó mientras éste volaba, basta reintentar.
@@ -82,7 +83,7 @@ class AuthInterceptor extends Interceptor {
     }
 
     try {
-      final newToken = await _storage.read(StorageKeys.token);
+      final newToken = await _tokens.readToken();
       req.headers['Authorization'] = newToken;
       req.extra[_retriedKey] = true;
       pfLog('auth: reintentando ${req.method} ${req.path}');

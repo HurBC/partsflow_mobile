@@ -3,6 +3,7 @@ import 'package:partsflow_mobile/core/storage/local_storage.dart';
 import 'package:partsflow_mobile/core/storage/local_storage_impl.dart';
 import 'package:partsflow_mobile/core/storage/secure_storage.dart';
 import 'package:partsflow_mobile/core/storage/secure_storage_impl.dart';
+import 'package:partsflow_mobile/core/storage/token_store.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -13,6 +14,9 @@ part 'storage_providers.g.dart';
 SecureStorage secureStorage(Ref ref) {
   return SecureStorageImpl(const FlutterSecureStorage());
 }
+
+@Riverpod(keepAlive: true)
+TokenStore tokenStore(Ref ref) => TokenStore(ref.read(secureStorageProvider));
 
 @Riverpod(keepAlive: true)
 Future<LocalStorage> localStorage(Ref ref) async {

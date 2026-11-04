@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../utils/image_sizing.dart';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -9,7 +10,8 @@ import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachment.dart';
-import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
+import 'package:partsflow_mobile/features/chat/presentation/providers/media_providers.dart';
+import 'package:partsflow_mobile/features/chat/presentation/utils/audio_playback_coordinator.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/media_files.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/video_player_page.dart';
 
@@ -31,35 +33,6 @@ String _extForMime(String? mime, String fallback) {
   return fallback;
 }
 
-/// Descarga (o reutiliza del caché temporal) la media recibida.
-/// Devuelve el archivo o un mensaje de error.
-Future<({File? file, String? error})> _fetchFile(
-  WidgetRef ref, {
-  required RemoteMediaKind kind,
-  required String downloadId,
-  required String cacheName,
-}) async {
-  final cached = await cachedTemp(cacheName);
-  if (cached != null) return (file: cached, error: null);
-  final r = await ref
-      .read(chatRepositoryProvider)
-      .mediaDownload(kind, downloadId);
-  switch (r) {
-    case Ok(:final value):
-      if (value == null || value.isEmpty) {
-        return (
-          file: null,
-          error: kind == RemoteMediaKind.document
-              ? 'No se pueden descargar documentos de 3 MB o más'
-              : 'No se pudo descargar el archivo',
-        );
-      }
-      return (file: await writeTemp(value, cacheName), error: null);
-    case Err():
-      return (file: null, error: 'No se pudo descargar el archivo');
-  }
-}
-
 // ---- Audio -------------------------------------------------------------------
 
 class AudioMessageView extends ConsumerStatefulWidget {
@@ -78,37 +51,42 @@ class AudioMessageView extends ConsumerStatefulWidget {
   ConsumerState<AudioMessageView> createState() => _AudioMessageViewState();
 }
 
-class _AudioMessageViewState extends ConsumerState<AudioMessageView> {
+class _AudioMessageViewState extends ConsumerState<AudioMessageView>
+    implements PausableAudio {
+  late final AudioPlaybackCoordinator _coordinator;
   AudioPlayer? _player;
   final _subs = <StreamSubscription<Object?>>[];
   MediaPreview? _preview;
   bool _loading = false;
   bool _ready = false;
   bool _playing = false;
-  Duration _pos = Duration.zero;
+  final ValueNotifier<Duration> _posN = ValueNotifier(Duration.zero);
   Duration? _dur;
 
   @override
   void initState() {
     super.initState();
+    _coordinator = ref.read(audioPlaybackCoordinatorProvider);
     final m = widget.message;
     if (m.mediaId != null) _loadPreview();
   }
 
   @override
   void dispose() {
+    _coordinator.release(this);
     for (final s in _subs) {
       s.cancel();
     }
     _player?.dispose();
+    _posN.dispose();
     super.dispose();
   }
 
   Future<void> _loadPreview() async {
     final m = widget.message;
     final r = await ref
-        .read(chatRepositoryProvider)
-        .mediaPreview(RemoteMediaKind.audio, m.mediaId!, m.replyId);
+        .read(mediaServiceProvider)
+        .preview(RemoteMediaKind.audio, m.mediaId!, m.replyId);
     if (!mounted) return;
     if (r case Ok(:final value)) {
       setState(() {
@@ -131,18 +109,19 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView> {
         var pv = _preview;
         if (pv == null) {
           final r = await ref
-              .read(chatRepositoryProvider)
-              .mediaPreview(RemoteMediaKind.audio, m.mediaId!, m.replyId);
+              .read(mediaServiceProvider)
+              .preview(RemoteMediaKind.audio, m.mediaId!, m.replyId);
           if (r case Ok(:final value)) pv = value;
         }
         final id = pv?.id ?? m.mediaId!;
         final ext = _extForMime(pv?.mime ?? m.mediaMime, 'ogg');
-        final res = await _fetchFile(
-          ref,
-          kind: RemoteMediaKind.audio,
-          downloadId: id,
-          cacheName: 'pf_audio_${m.id}.$ext',
-        );
+        final res = await ref
+            .read(mediaServiceProvider)
+            .fetchFile(
+              kind: RemoteMediaKind.audio,
+              downloadId: id,
+              cacheName: 'pf_audio_${m.id}.$ext',
+            );
         if (res.file == null) throw StateError(res.error ?? 'audio');
         _dur = await player.setFilePath(res.file!.path) ?? _dur;
       } else if (m.mediaUrl != null) {
@@ -157,10 +136,8 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView> {
             if (s.processingState == ProcessingState.completed) {
               player.pause();
               player.seek(Duration.zero);
-              setState(() {
-                _playing = false;
-                _pos = Duration.zero;
-              });
+              _posN.value = Duration.zero;
+              setState(() => _playing = false);
             } else {
               setState(() => _playing = s.playing);
             }
@@ -168,7 +145,9 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView> {
         )
         ..add(
           player.positionStream.listen((p) {
-            if (mounted) setState(() => _pos = p);
+            if (!mounted) return;
+            final d = (p - _posN.value).inMilliseconds.abs();
+            if (d >= 200 || p == Duration.zero || p == _dur) _posN.value = p;
           }),
         );
       if (!mounted) return;
@@ -176,6 +155,7 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView> {
         _ready = true;
         _loading = false;
       });
+      _coordinator.claim(this);
       await player.play();
     } catch (_) {
       _player?.dispose();
@@ -193,16 +173,18 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView> {
     if (_playing) {
       await _player!.pause();
     } else {
+      _coordinator.claim(this);
       await _player!.play();
     }
   }
 
   @override
+  Future<void> pause() async => _player?.pause();
+
+  @override
   Widget build(BuildContext context) {
     final total = _dur ?? Duration.zero;
     final max = total.inMilliseconds.toDouble();
-    final value = max <= 0 ? 0.0 : _pos.inMilliseconds.clamp(0, max).toDouble();
-    final shown = _ready && _playing || _pos > Duration.zero ? _pos : total;
     return SizedBox(
       width: 220,
       child: Row(
@@ -249,22 +231,40 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView> {
                     inactiveTrackColor: widget.color.withValues(alpha: 0.3),
                     thumbColor: widget.color,
                   ),
-                  child: Slider(
-                    value: value,
-                    max: max <= 0 ? 1 : max,
-                    onChanged: _ready && max > 0
-                        ? (v) =>
-                              _player?.seek(Duration(milliseconds: v.round()))
-                        : null,
+                  child: ValueListenableBuilder<Duration>(
+                    valueListenable: _posN,
+                    builder: (_, pos, _) => Slider(
+                      value: max <= 0
+                          ? 0.0
+                          : pos.inMilliseconds.clamp(0, max).toDouble(),
+                      max: max <= 0 ? 1 : max,
+                      onChanged: _ready && max > 0
+                          ? (v) {
+                              final d = Duration(milliseconds: v.round());
+                              _posN.value = d;
+                              _player?.seek(d);
+                            }
+                          : null,
+                    ),
                   ),
                 ),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Padding(
                     padding: const EdgeInsets.only(left: 12),
-                    child: Text(
-                      total == Duration.zero && !_ready ? 'Audio' : mmss(shown),
-                      style: TextStyle(fontSize: 12, color: widget.color),
+                    child: ValueListenableBuilder<Duration>(
+                      valueListenable: _posN,
+                      builder: (_, pos, _) {
+                        final shown = _ready && _playing || pos > Duration.zero
+                            ? pos
+                            : total;
+                        return Text(
+                          total == Duration.zero && !_ready
+                              ? 'Audio'
+                              : mmss(shown),
+                          style: TextStyle(fontSize: 12, color: widget.color),
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -295,6 +295,7 @@ class VideoMessageView extends ConsumerStatefulWidget {
 
 class _VideoMessageViewState extends ConsumerState<VideoMessageView> {
   MediaPreview? _preview;
+  Uint8List? _thumbBytes;
   bool _busy = false;
 
   @override
@@ -303,11 +304,17 @@ class _VideoMessageViewState extends ConsumerState<VideoMessageView> {
     final m = widget.message;
     if (m.mediaId != null) {
       ref
-          .read(chatRepositoryProvider)
-          .mediaPreview(RemoteMediaKind.video, m.mediaId!, m.replyId)
+          .read(mediaServiceProvider)
+          .preview(RemoteMediaKind.video, m.mediaId!, m.replyId)
           .then((r) {
             if (mounted && r is Ok<MediaPreview>) {
-              setState(() => _preview = r.value);
+              setState(() {
+                _preview = r.value;
+                final t = r.value.thumbnailBytes;
+                _thumbBytes = t == null
+                    ? null
+                    : (t is Uint8List ? t : Uint8List.fromList(t));
+              });
             }
           });
     }
@@ -327,12 +334,13 @@ class _VideoMessageViewState extends ConsumerState<VideoMessageView> {
     }
     setState(() => _busy = true);
     final mime = _preview?.mime ?? m.mediaMime ?? 'video/mp4';
-    final res = await _fetchFile(
-      ref,
-      kind: RemoteMediaKind.video,
-      downloadId: _preview?.id ?? m.mediaId!,
-      cacheName: 'pf_video_${m.id}.${_extForMime(mime, 'mp4')}',
-    );
+    final res = await ref
+        .read(mediaServiceProvider)
+        .fetchFile(
+          kind: RemoteMediaKind.video,
+          downloadId: _preview?.id ?? m.mediaId!,
+          cacheName: 'pf_video_${m.id}.${_extForMime(mime, 'mp4')}',
+        );
     if (!mounted) return;
     setState(() => _busy = false);
     if (res.file == null) return _snack(context, res.error!);
@@ -342,7 +350,7 @@ class _VideoMessageViewState extends ConsumerState<VideoMessageView> {
   @override
   Widget build(BuildContext context) {
     final pf = PfColors.of(context);
-    final thumb = _preview?.thumbnailBytes;
+    final thumb = _thumbBytes;
     final dur = _preview?.durationSeconds;
     return Semantics(
       button: true,
@@ -361,7 +369,8 @@ class _VideoMessageViewState extends ConsumerState<VideoMessageView> {
                 children: [
                   if (thumb != null)
                     Image.memory(
-                      Uint8List.fromList(thumb),
+                      thumb,
+                      cacheWidth: decodePx(context, 200),
                       fit: BoxFit.cover,
                       errorBuilder: (_, _, _) => const SizedBox.shrink(),
                     ),
@@ -447,8 +456,8 @@ class _DocumentMessageViewState extends ConsumerState<DocumentMessageView> {
     final m = widget.message;
     if (m.mediaId != null && m.mediaFilename == null) {
       ref
-          .read(chatRepositoryProvider)
-          .mediaPreview(RemoteMediaKind.document, m.mediaId!, m.replyId)
+          .read(mediaServiceProvider)
+          .preview(RemoteMediaKind.document, m.mediaId!, m.replyId)
           .then((r) {
             if (mounted && r is Ok<MediaPreview>) {
               setState(() => _preview = r.value);
@@ -479,12 +488,13 @@ class _DocumentMessageViewState extends ConsumerState<DocumentMessageView> {
     }
     setState(() => _busy = true);
     final name = _name;
-    final res = await _fetchFile(
-      ref,
-      kind: RemoteMediaKind.document,
-      downloadId: m.mediaId!,
-      cacheName: 'pf_doc_${m.id}_$name',
-    );
+    final res = await ref
+        .read(mediaServiceProvider)
+        .fetchFile(
+          kind: RemoteMediaKind.document,
+          downloadId: m.mediaId!,
+          cacheName: 'pf_doc_${m.id}_$name',
+        );
     if (!mounted) return;
     setState(() => _busy = false);
     if (res.file == null) return _snack(context, res.error!);
@@ -765,6 +775,7 @@ class LocalMediaView extends StatelessWidget {
               File(path),
               width: 200,
               height: 150,
+              cacheWidth: decodePx(context, 200),
               fit: BoxFit.cover,
               errorBuilder: (_, _, _) => Container(
                 width: 200,

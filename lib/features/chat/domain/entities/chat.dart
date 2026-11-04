@@ -1,3 +1,5 @@
+import 'package:collection/collection.dart';
+
 class ChatResponsible {
   const ChatResponsible({
     required this.id,
@@ -10,6 +12,17 @@ class ChatResponsible {
   final String lastName;
 
   String get fullName => '$firstName $lastName'.trim();
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ChatResponsible &&
+          other.id == id &&
+          other.firstName == firstName &&
+          other.lastName == lastName;
+
+  @override
+  int get hashCode => Object.hashAll([id, firstName, lastName]);
 }
 
 class ChatTag {
@@ -17,10 +30,31 @@ class ChatTag {
 
   final String name;
   final String? color;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ChatTag && other.name == name && other.color == color;
+
+  @override
+  int get hashCode => Object.hashAll([name, color]);
 }
 
 class ChatLastMessage {
-  const ChatLastMessage({this.flow, this.ack, this.type, this.body, this.date});
+  const ChatLastMessage({
+    this.flow,
+    this.ack,
+    this.type,
+    this.body,
+    this.date,
+    this.messageId,
+    this.websocketId,
+  });
+
+  /// Ids del mensaje (si el servidor los envía o vienen de un evento realtime):
+  /// permiten deduplicar y casar actualizaciones de estado.
+  final String? messageId;
+  final String? websocketId;
 
   /// 'inbound' | 'outbound'
   final String? flow;
@@ -33,6 +67,22 @@ class ChatLastMessage {
 
   bool get isInbound => flow == 'inbound';
   bool get isOutbound => flow == 'outbound';
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ChatLastMessage &&
+          other.flow == flow &&
+          other.ack == ack &&
+          other.type == type &&
+          other.body == body &&
+          other.date == date &&
+          other.messageId == messageId &&
+          other.websocketId == websocketId;
+
+  @override
+  int get hashCode =>
+      Object.hashAll([flow, ack, type, body, date, messageId, websocketId]);
 }
 
 /// Mensaje que coincidió en una búsqueda de texto libre (`referenceMessage`).
@@ -47,6 +97,18 @@ class ChatReference {
   final String? flow;
 
   bool get isOutbound => flow == 'outbound';
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ChatReference &&
+          other.id == id &&
+          other.text == text &&
+          other.date == date &&
+          other.flow == flow;
+
+  @override
+  int get hashCode => Object.hashAll([id, text, date, flow]);
 }
 
 class ChatClient {
@@ -104,6 +166,37 @@ class ChatClient {
     issuesCount: issuesCount ?? this.issuesCount,
     tags: tags ?? this.tags,
   );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ChatClient &&
+          other.id == id &&
+          other.name == name &&
+          other.isActive == isActive &&
+          other.isChatResolved == isChatResolved &&
+          other.operationMode == operationMode &&
+          other.isAiActive == isAiActive &&
+          other.isImportant == isImportant &&
+          other.status == status &&
+          other.responsible == responsible &&
+          other.issuesCount == issuesCount &&
+          const DeepCollectionEquality().equals(other.tags, tags);
+
+  @override
+  int get hashCode => Object.hashAll([
+    id,
+    name,
+    isActive,
+    isChatResolved,
+    operationMode,
+    isAiActive,
+    isImportant,
+    status,
+    responsible,
+    issuesCount,
+    const DeepCollectionEquality().hash(tags),
+  ]);
 }
 
 class Chat {
@@ -170,11 +263,38 @@ class Chat {
     hasPendingReminder: hasPendingReminder ?? this.hasPendingReminder,
   );
 
-  // La identidad es el id: permite usar el Chat como clave de provider
-  // (la conversación se crea con el primer Chat recibido).
   @override
-  bool operator ==(Object other) => other is Chat && other.id == id;
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Chat &&
+          other.id == id &&
+          other.phone == phone &&
+          other.name == name &&
+          other.contactName == contactName &&
+          other.imageUrl == imageUrl &&
+          other.lastMessageAt == lastMessageAt &&
+          other.lastInboundMessageAt == lastInboundMessageAt &&
+          other.lastMessage == lastMessage &&
+          other.referenceMessage == referenceMessage &&
+          other.unreadCount == unreadCount &&
+          other.isUnread == isUnread &&
+          other.client == client &&
+          other.hasPendingReminder == hasPendingReminder;
 
   @override
-  int get hashCode => id.hashCode;
+  int get hashCode => Object.hashAll([
+    id,
+    phone,
+    name,
+    contactName,
+    imageUrl,
+    lastMessageAt,
+    lastInboundMessageAt,
+    lastMessage,
+    referenceMessage,
+    unreadCount,
+    isUnread,
+    client,
+    hasPendingReminder,
+  ]);
 }

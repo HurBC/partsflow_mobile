@@ -1,27 +1,33 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:partsflow_mobile/core/router/app_routes.dart';
+import 'package:partsflow_mobile/core/router/tab_visibility.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 
 class AppShell extends StatelessWidget {
-  const AppShell({super.key, required Widget child}) : _child = child;
+  const AppShell({super.key, required this.navigationShell});
 
-  final Widget _child;
+  final StatefulNavigationShell navigationShell;
 
   @override
   Widget build(BuildContext context) {
     final pf = PfColors.of(context);
 
     return Scaffold(
-      body: _child,
+      body: TabVisibility(
+        activeIndex: navigationShell.currentIndex,
+        child: navigationShell,
+      ),
       bottomNavigationBar: DecoratedBox(
         decoration: BoxDecoration(
           border: Border(top: BorderSide(color: pf.divider)),
         ),
         child: NavigationBar(
-          selectedIndex: _selectedIndex(context),
-          onDestinationSelected: (index) =>
-              _onDestinationSelected(index, context),
+          selectedIndex: navigationShell.currentIndex,
+          // Volver a tocar la tab activa regresa a su raíz.
+          onDestinationSelected: (index) => navigationShell.goBranch(
+            index,
+            initialLocation: index == navigationShell.currentIndex,
+          ),
           destinations: const [
             NavigationDestination(
               icon: Icon(Icons.chat_bubble_outline),
@@ -42,25 +48,5 @@ class AppShell extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  int _selectedIndex(BuildContext context) {
-    final location = GoRouterState.of(context).matchedLocation;
-
-    if (location.startsWith(AppRoutes.orders)) return 1;
-    if (location.startsWith(AppRoutes.profile)) return 2;
-
-    return 0;
-  }
-
-  void _onDestinationSelected(int index, BuildContext context) {
-    switch (index) {
-      case 0:
-        context.go(AppRoutes.chat);
-      case 1:
-        context.go(AppRoutes.orders);
-      case 2:
-        context.go(AppRoutes.profile);
-    }
   }
 }

@@ -31,6 +31,10 @@ class _OrderDetailPageState extends ConsumerState<OrderDetailPage> {
   bool _moving = false;
   bool _openingChat = false;
 
+  /// Cabecera del pedido refrescada tras mover de etapa (sin recargar
+  /// productos, cotización ni notas).
+  OrderSummary? _fresh;
+
   void _snack(String text) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -51,6 +55,14 @@ class _OrderDetailPageState extends ConsumerState<OrderDetailPage> {
         _snack('No encontramos el chat de este cliente');
       case Err(:final failure):
         _snack(failureMessage(failure));
+    }
+  }
+
+  Future<void> _refreshOrder() async {
+    final r = await ref.read(ordersRepositoryProvider).order(widget.id);
+    if (!mounted) return;
+    if (r case Ok(:final value)) {
+      setState(() => _fresh = value.copyWith(products: _fresh?.products));
     }
   }
 
@@ -86,8 +98,15 @@ class _OrderDetailPageState extends ConsumerState<OrderDetailPage> {
     switch (r) {
       case Ok(:final value) when value.ok:
         _snack('Pedido #${order.id} movido a ${to.label}');
-        ref.invalidate(orderDetailProvider(widget.id));
-        ref.read(ordersListControllerProvider.notifier).poll();
+        final from = order.stage;
+        // Mientras llega la cabecera real, la etapa se ve de inmediato.
+        setState(() => _fresh = order.withStatus(to.moveStatus));
+        if (from != null) {
+          ref
+              .read(ordersListControllerProvider.notifier)
+              .onOrderMoved(order.id, from, to);
+        }
+        _refreshOrder();
       case Ok(:final value):
         _snack(value.detail ?? 'No pudimos mover el pedido. Intenta de nuevo.');
       case Err(:final failure):
@@ -100,7 +119,8 @@ class _OrderDetailPageState extends ConsumerState<OrderDetailPage> {
     final pf = PfColors.of(context);
     final async = ref.watch(orderDetailProvider(widget.id));
     final detail = async.value;
-    final order = (detail?.order ?? widget.initial)?.fillFrom(widget.initial);
+    final base = (detail?.order ?? widget.initial)?.fillFrom(widget.initial);
+    final order = _fresh?.fillFrom(base) ?? base;
 
     Widget body;
     if (order == null) {
@@ -117,6 +137,7 @@ class _OrderDetailPageState extends ConsumerState<OrderDetailPage> {
     } else {
       body = RefreshIndicator(
         onRefresh: () async {
+          _fresh = null;
           ref.invalidate(orderDetailProvider(widget.id));
           await ref
               .read(orderDetailProvider(widget.id).future)

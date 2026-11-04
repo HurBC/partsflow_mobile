@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import '../utils/image_sizing.dart';
 import 'package:flutter/material.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachment.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/media_files.dart';
@@ -186,6 +187,7 @@ class _FilePreview extends StatelessWidget {
         child: Center(
           child: Image.file(
             File(file.path),
+            cacheWidth: kMaxFullscreenDecodePx,
             fit: BoxFit.contain,
             errorBuilder: (_, _, _) => const Icon(
               Icons.broken_image_outlined,

@@ -14,6 +14,7 @@ const _baseUrl = String.fromEnvironment("API_BASE_URL");
 @Riverpod(keepAlive: true)
 TokenRefresher tokenRefresher(Ref ref) => TokenRefresher(
   storage: ref.read(secureStorageProvider),
+  tokens: ref.read(tokenStoreProvider),
   baseUrl: _baseUrl,
 );
 
@@ -22,8 +23,8 @@ Dio dio(Ref ref) {
   final dio = Dio(
     BaseOptions(
       baseUrl: _baseUrl,
-      connectTimeout: const Duration(seconds: 30),
-      receiveTimeout: const Duration(seconds: 30),
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 15),
       sendTimeout: const Duration(seconds: 30),
       headers: const {
         'Content-Type': 'application/json',
@@ -34,10 +35,16 @@ Dio dio(Ref ref) {
 
   dio.interceptors.add(
     AuthInterceptor(
-      storage: ref.read(secureStorageProvider),
+      tokens: ref.read(tokenStoreProvider),
       refresher: ref.read(tokenRefresherProvider),
       // Sin interceptores: el reintento tras refrescar no puede entrar en bucle.
-      retryDio: Dio(BaseOptions(baseUrl: _baseUrl)),
+      retryDio: Dio(
+        BaseOptions(
+          baseUrl: _baseUrl,
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 15),
+        ),
+      ),
       onSessionExpired: () => ref.invalidate(authStateProvider),
     ),
   );
@@ -45,6 +52,25 @@ Dio dio(Ref ref) {
   // Diagnóstico: método, path, status y body truncado. Nunca headers ni tokens.
   dio.interceptors.add(
     InterceptorsWrapper(
+      onRequest: (o, handler) {
+        if (pfDebugLog) {
+          o.extra['pf_t0'] = DateTime.now().millisecondsSinceEpoch;
+        }
+        handler.next(o);
+      },
+      onResponse: (r, handler) {
+        if (pfDebugLog) {
+          final t0 = r.requestOptions.extra['pf_t0'];
+          final ms = t0 is int
+              ? ' ms=${DateTime.now().millisecondsSinceEpoch - t0}'
+              : '';
+          pfLog(
+            'http ${r.requestOptions.method} ${r.requestOptions.uri.path} '
+            'status=${r.statusCode}$ms',
+          );
+        }
+        handler.next(r);
+      },
       onError: (e, handler) {
         if (pfDebugLog) {
           final r = e.response;

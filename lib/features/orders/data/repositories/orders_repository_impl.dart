@@ -70,6 +70,18 @@ class OrdersRepositoryImpl implements OrdersRepository {
       });
 
   @override
+  Future<Result<OrderSummary>> order(int id) async {
+    final r = await _guard(
+      () async => orderFromDetail(await _remote.order(id)),
+    );
+    return switch (r) {
+      Ok(:final value) =>
+        value == null ? Result.err(Failure.unknown()) : Result.ok(value),
+      Err(:final failure) => Result.err(failure),
+    };
+  }
+
+  @override
   Future<Result<OrderDetail>> detail(int id) async {
     var anyOk = false;
     Future<Object?> part(

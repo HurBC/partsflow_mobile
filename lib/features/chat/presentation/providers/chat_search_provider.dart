@@ -1,9 +1,12 @@
 import 'dart:async';
 
+import 'package:collection/collection.dart';
 import 'package:partsflow_mobile/core/utils/pf_log.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
+import 'package:partsflow_mobile/features/chat/domain/cancel_signal.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_query.dart';
+import 'package:partsflow_mobile/features/chat/domain/logic/search_text.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
@@ -26,6 +29,7 @@ class SearchSection {
     this.cursorId,
     this.loadingMore = false,
     this.moreFailed = false,
+    this.refreshing = false,
   });
 
   final SectionStatus status;
@@ -39,6 +43,9 @@ class SearchSection {
   final bool loadingMore;
   final bool moreFailed;
 
+  /// Hay una búsqueda nueva en vuelo y [items] son los de la anterior.
+  final bool refreshing;
+
   SearchSection copyWith({
     SectionStatus? status,
     List<Chat>? items,
@@ -47,6 +54,7 @@ class SearchSection {
     String? cursorId,
     bool? loadingMore,
     bool? moreFailed,
+    bool? refreshing,
   }) => SearchSection(
     status: status ?? this.status,
     items: items ?? this.items,
@@ -56,7 +64,35 @@ class SearchSection {
     cursorId: cursorId ?? this.cursorId,
     loadingMore: loadingMore ?? this.loadingMore,
     moreFailed: moreFailed ?? this.moreFailed,
+    refreshing: refreshing ?? this.refreshing,
   );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SearchSection &&
+          other.status == status &&
+          const DeepCollectionEquality().equals(other.items, items) &&
+          other.hint == hint &&
+          other.hasMore == hasMore &&
+          other.cursor == cursor &&
+          other.cursorId == cursorId &&
+          other.loadingMore == loadingMore &&
+          other.moreFailed == moreFailed &&
+          other.refreshing == refreshing;
+
+  @override
+  int get hashCode => Object.hashAll([
+    status,
+    const DeepCollectionEquality().hash(items),
+    hint,
+    hasMore,
+    cursor,
+    cursorId,
+    loadingMore,
+    moreFailed,
+    refreshing,
+  ]);
 }
 
 class ChatSearchState {
@@ -76,24 +112,20 @@ class ChatSearchState {
         clients: clients ?? this.clients,
         messages: messages ?? this.messages,
       );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ChatSearchState &&
+          other.query == query &&
+          other.clients == clients &&
+          other.messages == messages;
+
+  @override
+  int get hashCode => Object.hashAll([query, clients, messages]);
 }
 
 // ---- Clasificación del texto (puro, sin red) ---------------------------------
-
-bool hasLetters(String q) => RegExp(r'\p{L}', unicode: true).hasMatch(q);
-
-String onlyDigits(String q) => q.replaceAll(RegExp(r'\D'), '');
-
-/// Patente chilena: 4 letras + 2 dígitos o 2 letras + 4 dígitos, con o sin
-/// separadores. Devuelve la patente normalizada (mayúsculas, sin separadores)
-/// o null.
-String? plateFrom(String q) {
-  final s = q.replaceAll(RegExp(r'[\s\-·.]'), '').toUpperCase();
-  final ok =
-      RegExp(r'^[A-Z]{4}\d{2}$').hasMatch(s) ||
-      RegExp(r'^[A-Z]{2}\d{4}$').hasMatch(s);
-  return ok ? s : null;
-}
 
 /// Búsqueda del modo "Todo": consultas en paralelo; cada sección se actualiza
 /// por separado. Las búsquedas viejas se descartan (`_seq`).
@@ -102,11 +134,30 @@ class ChatSearchController extends _$ChatSearchController {
   int _seq = 0;
   ChatQuery? _messagesBase;
 
+  /// Cancela todos los requests de la búsqueda vigente (clientes, mensajes y
+  /// páginas siguientes).
+  CancelSignal _signal = CancelSignal();
+
+  /// Búsqueda en curso: si llega la misma, se reutiliza en vez de relanzarla.
+  Object? _activeKey;
+  Future<void>? _activeRun;
+
   @override
-  ChatSearchState build() => const ChatSearchState();
+  ChatSearchState build() {
+    ref.onDispose(() => _signal.cancel());
+    return const ChatSearchState();
+  }
+
+  void _supersede() {
+    _seq++;
+    _signal.cancel();
+    _signal = CancelSignal();
+    _activeKey = null;
+    _activeRun = null;
+  }
 
   void clear() {
-    _seq++;
+    _supersede();
     _messagesBase = null;
     if (state.query.isEmpty) return;
     state = const ChatSearchState();
@@ -117,9 +168,36 @@ class ChatSearchController extends _$ChatSearchController {
     required ChatTab tab,
     required AdvancedFilters advanced,
     String? userId,
-  }) async {
+  }) {
     final q = text.trim();
-    final seq = ++_seq;
+    if (q.isEmpty) {
+      clear();
+      return Future.value();
+    }
+    final key = (q, tab, advanced, userId);
+    final active = _activeRun;
+    if (active != null && _activeKey == key) return active;
+    _supersede();
+    _activeKey = key;
+    final fut = _run(q, tab, advanced, userId, _seq, _signal);
+    _activeRun = fut;
+    fut.whenComplete(() {
+      if (identical(_activeRun, fut)) {
+        _activeKey = null;
+        _activeRun = null;
+      }
+    });
+    return fut;
+  }
+
+  Future<void> _run(
+    String q,
+    ChatTab tab,
+    AdvancedFilters advanced,
+    String? userId,
+    int seq,
+    CancelSignal signal,
+  ) async {
     ChatQuery base(SearchMode mode, String t) => ChatQuery(
       tab: tab,
       advanced: advanced,
@@ -141,6 +219,15 @@ class ChatSearchController extends _$ChatSearchController {
       'search todo: q.len=${q.length} clientes=${clientQueries.length} '
       'mensajes=$runMessages',
     );
+    // Se conservan los resultados previos mientras carga la nueva búsqueda.
+    SearchSection loading(SearchSection prev) =>
+        prev.status == SectionStatus.data
+        ? SearchSection(
+            status: SectionStatus.data,
+            items: prev.items,
+            refreshing: true,
+          )
+        : const SearchSection(status: SectionStatus.loading);
     state = ChatSearchState(
       query: q,
       clients: clientQueries.isEmpty
@@ -148,9 +235,9 @@ class ChatSearchController extends _$ChatSearchController {
               hint:
                   'Escribe un nombre, un teléfono (4 dígitos o más) o una patente.',
             )
-          : const SearchSection(status: SectionStatus.loading),
+          : loading(state.clients),
       messages: runMessages
-          ? const SearchSection(status: SectionStatus.loading)
+          ? loading(state.messages)
           : const SearchSection(
               hint:
                   'Escribe al menos 3 caracteres para buscar en los mensajes.',
@@ -158,15 +245,21 @@ class ChatSearchController extends _$ChatSearchController {
     );
 
     await Future.wait([
-      if (clientQueries.isNotEmpty) _runClients(seq, clientQueries),
-      if (runMessages) _runMessages(seq, _messagesBase!),
+      if (clientQueries.isNotEmpty) _runClients(seq, signal, clientQueries),
+      if (runMessages) _runMessages(seq, signal, _messagesBase!),
     ]);
   }
 
-  Future<void> _runClients(int seq, List<ChatQuery> queries) async {
+  Future<void> _runClients(
+    int seq,
+    CancelSignal signal,
+    List<ChatQuery> queries,
+  ) async {
     final repo = ref.read(chatRepositoryProvider);
-    final results = await Future.wait(queries.map(repo.searchChats));
-    if (!ref.mounted || seq != _seq) return;
+    final results = await Future.wait(
+      queries.map((q) => repo.searchChats(q, cancel: signal)),
+    );
+    if (!ref.mounted || seq != _seq || signal.isCancelled) return;
     final seen = <String>{};
     final items = <Chat>[];
     var anyOk = false;
@@ -186,9 +279,15 @@ class ChatSearchController extends _$ChatSearchController {
     );
   }
 
-  Future<void> _runMessages(int seq, ChatQuery query) async {
-    final r = await ref.read(chatRepositoryProvider).searchChats(query);
-    if (!ref.mounted || seq != _seq) return;
+  Future<void> _runMessages(
+    int seq,
+    CancelSignal signal,
+    ChatQuery query,
+  ) async {
+    final r = await ref
+        .read(chatRepositoryProvider)
+        .searchChats(query, cancel: signal);
+    if (!ref.mounted || seq != _seq || signal.isCancelled) return;
     switch (r) {
       case Ok(:final value):
         state = state.copyWith(
@@ -214,10 +313,12 @@ class ChatSearchController extends _$ChatSearchController {
     if (base == null ||
         !s.hasMore ||
         s.loadingMore ||
+        s.refreshing ||
         s.status != SectionStatus.data) {
       return;
     }
     final seq = _seq;
+    final signal = _signal;
     state = state.copyWith(
       messages: s.copyWith(loadingMore: true, moreFailed: false),
     );
@@ -233,8 +334,9 @@ class ChatSearchController extends _$ChatSearchController {
             cursor: s.cursor,
             cursorId: s.cursorId,
           ),
+          cancel: signal,
         );
-    if (!ref.mounted || seq != _seq) return;
+    if (!ref.mounted || seq != _seq || signal.isCancelled) return;
     final cur = state.messages;
     switch (r) {
       case Ok(:final value):
