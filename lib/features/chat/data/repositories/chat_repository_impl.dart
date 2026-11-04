@@ -8,7 +8,9 @@ import 'package:partsflow_mobile/core/utils/pf_log.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/chat/data/datasources/chat_remote_datasource.dart';
 import 'package:partsflow_mobile/features/chat/domain/cancel_signal.dart';
+import 'package:partsflow_mobile/features/chat/data/mappers/action_required_mapper.dart';
 import 'package:partsflow_mobile/features/chat/data/mappers/chat_mapper.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/action_required_counts.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_extras.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_query.dart';
@@ -16,6 +18,7 @@ import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message_template.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachment.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/quick_answer.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/reminder.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/send_outcome.dart';
 import 'package:partsflow_mobile/features/chat/domain/repositories/chat_repository.dart';
 
@@ -86,11 +89,8 @@ class ChatRepositoryImpl implements ChatRepository {
         });
     }
     p.addAll(q.advanced.toParams());
-    final text = q.searchText.trim();
-    if (text.isNotEmpty) {
-      final prefix = q.searchMode.prefix;
-      p['search'] = prefix == null ? text : '$prefix,$text';
-    }
+    final search = chatSearchParam(q.searchMode, q.searchText);
+    if (search != null) p['search'] = search;
     if (q.cursor != null) {
       p['last_message_timestamp'] = q.cursor;
       if (q.cursorId != null) p['last_message_id'] = q.cursorId;
@@ -204,6 +204,11 @@ class ChatRepositoryImpl implements ChatRepository {
   @override
   Future<Result<bool>> markUnread(String chatId) =>
       _guard(() async => (await _remote.markUnread(chatId)) == 200);
+
+  @override
+  Future<Result<ActionRequiredCounts>> actionRequiredCounts() => _guard(
+    () async => actionRequiredFromJson(await _remote.actionRequiredCounts()),
+  );
 
   @override
   Future<Result<bool>> updateClient(
@@ -541,4 +546,50 @@ class ChatRepositoryImpl implements ChatRepository {
     });
     return true;
   });
+
+  @override
+  Future<Result<List<Reminder>>> pendingReminders(String chatId) =>
+      _guard(() async {
+        final out = <Reminder>[];
+        for (final r in _items(await _remote.pendingReminders(chatId))) {
+          final rem = reminderFromJson(asMap(r));
+          if (rem != null) out.add(rem);
+        }
+        out.sort((a, b) => a.dueAt.compareTo(b.dueAt));
+        return out;
+      });
+
+  @override
+  Future<Result<bool>> resolveReminder(String id) => _guard(() async {
+    await _remote.resolveReminder(id);
+    return true;
+  });
+
+  @override
+  Future<Result<ReminderExtendResult>> extendReminder({
+    required Reminder reminder,
+    required String userId,
+    required int minutes,
+    String? chatId,
+  }) async {
+    final chat = reminder.chatId.isNotEmpty ? reminder.chatId : (chatId ?? '');
+    try {
+      await _remote.createReminder({
+        'reminder_type': 'minutes',
+        'chat_id': chat,
+        'responsible': userId,
+        'reminder_time': minutes,
+        'comment': reminder.comment ?? '',
+      });
+    } catch (e) {
+      return Result.err(_fail(e));
+    }
+    try {
+      await _remote.resolveReminder(reminder.id);
+    } catch (e) {
+      pfLog('extendReminder: resolve failed ${e.runtimeType}');
+      return Result.ok(ReminderExtendResult.createdOnly);
+    }
+    return Result.ok(ReminderExtendResult.done);
+  }
 }

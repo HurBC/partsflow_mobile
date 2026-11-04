@@ -13,10 +13,13 @@ import 'package:partsflow_mobile/features/auth/presentation/providers/auth_provi
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_extras.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_query.dart';
+import 'package:partsflow_mobile/features/chat/presentation/providers/action_required_provider.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_extras_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_list_view_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_search_provider.dart';
+import 'package:partsflow_mobile/features/chat/presentation/utils/chat_row_actions.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/action_required_bar.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_common.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_filters_sheet.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_motion.dart';
@@ -64,6 +67,8 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
           ref.invalidate(apiUserProvider);
         }
         ref.read(chatListControllerProvider.notifier).autoPoll();
+        // Watchdog: refresca las tarjetas (con tope de frecuencia propio).
+        ref.read(actionRequiredProvider.notifier).refresh();
       },
     )..start();
   }
@@ -116,6 +121,38 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
     if (!mounted) return;
     _covered = false;
     ref.read(chatListControllerProvider.notifier).poll();
+  }
+
+  /// Tap en una tarjeta. Importantes: igual que el BO (pestaña Todos + búsqueda
+  /// por esos teléfonos). Pedidos: hoja con la lista (máx. 50) y abre el
+  /// detalle del elegido (el BO abre su kanban filtrado por esos ids).
+  Future<void> _openActionCard(ActionCard card) async {
+    final counts = ref.read(actionRequiredProvider).counts;
+    if (card == ActionCard.importantClients) {
+      _debounce?.cancel();
+      final phones = counts.importantClients;
+      final shown = phones.length > maxSearchPhones
+          ? phones.sublist(0, maxSearchPhones)
+          : phones;
+      _searchController.text = shown.join(',');
+      if (_scroll.hasClients) _scroll.jumpTo(0);
+      ref.read(chatListControllerProvider.notifier).searchPhones(shown);
+      if (shown.length < phones.length) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(content: Text('Mostrando los primeros $maxSearchPhones')),
+          );
+      }
+      setState(() {});
+      return;
+    }
+    final ids = card == ActionCard.toQuote
+        ? counts.toQuoteOrders
+        : counts.optionsAcceptedOrders;
+    final id = await showActionOrdersSheet(context, card: card, orderIds: ids);
+    if (id == null || !mounted) return;
+    context.push(AppRoutes.orderDetail(id));
   }
 
   Future<void> _openFilters() async {
@@ -221,7 +258,11 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
   }
 
   Future<void> _refresh() async {
+    final cards = ref
+        .read(actionRequiredProvider.notifier)
+        .refresh(force: true);
     final err = await ref.read(chatListControllerProvider.notifier).refresh();
+    await cards;
     if (err != null && mounted) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -293,13 +334,21 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
             },
           ),
           if (!realtime) const _NoRealtimeBanner(),
+          ActionRequiredBar(onOpen: _openActionCard),
           Expanded(
             child: ColoredBox(
               color: pf.surface,
-              child: ChatListBody(
-                scroll: _scroll,
-                onRefresh: _refresh,
-                onOpen: _openChat,
+              // La cabecera ya descuenta el inset superior del sistema: sin esto,
+              // los ListView sin padding explícito lo vuelven a sumar (hueco
+              // vacío entre las tarjetas y el primer chat).
+              child: MediaQuery.removePadding(
+                context: context,
+                removeTop: true,
+                child: ChatListBody(
+                  scroll: _scroll,
+                  onRefresh: _refresh,
+                  onOpen: _openChat,
+                ),
               ),
             ),
           ),
@@ -535,6 +584,14 @@ class _Header extends StatelessWidget {
               ),
             ),
           ),
+          if (isInvalidOrderIdSearch(searchMode, searchController.text))
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+              child: Text(
+                orderIdSearchHint,
+                style: TextStyle(fontSize: 12, color: pf.text2),
+              ),
+            ),
           const SizedBox(height: 6),
           SizedBox(
             height: 48,
@@ -580,6 +637,8 @@ IconData searchModeIcon(SearchMode m) => switch (m) {
   SearchMode.plate => Icons.directions_car_outlined,
   SearchMode.note => Icons.description_outlined,
   SearchMode.responsible => Icons.badge_outlined,
+  SearchMode.orderId => Icons.receipt_long_outlined,
+  SearchMode.orderNote => Icons.sticky_note_2_outlined,
 };
 
 /// Modo de búsqueda a la izquierda de la barra (equivale a SEARCH_MODES del BO).
@@ -1012,7 +1071,11 @@ class _ChatRow extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final chat = ref.watch(chatByIdProvider(id));
     if (chat == null) return const SizedBox.shrink();
-    return ChatTile(chat: chat, onTap: () => onOpen(chat));
+    return ChatTile(
+      chat: chat,
+      onTap: () => onOpen(chat),
+      onLongPress: () => showChatRowActions(context, ref, chat),
+    );
   }
 }
 

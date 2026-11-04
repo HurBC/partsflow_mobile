@@ -388,3 +388,20 @@ List<Chat>? applyUpdatesToChats(
   }
   return changed ? cur : null;
 }
+
+/// ¿El chat, ya modificado por una acción local, dejó de pertenecer a [tab]?
+/// Pendientes/Todos/Problemas excluyen resueltos y archivados; Asignados exige
+/// ser del usuario [userId]; Resueltos exige estar resuelto y Archivados,
+/// inactivo. No evalúa lo que depende del servidor (pendiente, problemas).
+bool chatLeavesTab(ChatTab tab, Chat c, {String? userId}) {
+  final cl = c.client;
+  final resolved = cl?.isChatResolved ?? false;
+  final active = cl?.isActive ?? true;
+  return switch (tab) {
+    ChatTab.pending || ChatTab.all || ChatTab.issues => resolved || !active,
+    ChatTab.assigned =>
+      resolved || userId == null || cl?.responsible?.id != userId,
+    ChatTab.resolved => !resolved,
+    ChatTab.archived => active,
+  };
+}

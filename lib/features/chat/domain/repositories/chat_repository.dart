@@ -2,14 +2,25 @@ import 'dart:typed_data';
 
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/chat/domain/cancel_signal.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/action_required_counts.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_extras.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/reminder.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_query.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message_template.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachment.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/quick_answer.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/send_outcome.dart';
+
+/// Resultado de [ChatRepository.extendReminder].
+enum ReminderExtendResult {
+  /// Se creó el nuevo y se resolvió el original.
+  done,
+
+  /// Se creó el nuevo pero el original no se pudo resolver.
+  createdOnly,
+}
 
 abstract class ChatRepository {
   /// [cancel] aborta el request en vuelo (la respuesta pasa a ser un error
@@ -64,6 +75,9 @@ abstract class ChatRepository {
   Future<Result<bool>> markRead(String chatId);
   Future<Result<bool>> markUnread(String chatId);
 
+  /// Pedidos/clientes que requieren acción (`chat/summary/action-required-counts/`).
+  Future<Result<ActionRequiredCounts>> actionRequiredCounts();
+
   /// PATCH de campos del cliente (el repositorio agrega `id`).
   Future<Result<bool>> updateClient(
     String clientId,
@@ -106,5 +120,25 @@ abstract class ChatRepository {
     required String unit,
     required int time,
     required String comment,
+  });
+
+  /// Recordatorios pendientes (no resueltos) del chat.
+  Future<Result<List<Reminder>>> pendingReminders(String chatId);
+
+  Future<Result<bool>> resolveReminder(String id);
+
+  /// Reprograma [reminder] para dentro de [minutes]. SAPI solo extiende +5 min
+  /// (`extend-reminder` ignora el body), así que se crea uno nuevo con el mismo
+  /// texto y se resuelve el original.
+  ///
+  /// [chatId] es el respaldo si el recordatorio no trae chat. Un fallo plano
+  /// significa que no se creó nada (reintentar es seguro); si se creó el nuevo
+  /// pero no se pudo resolver el original, éxito parcial
+  /// ([ReminderExtendResult.createdOnly]): reintentar duplicaría.
+  Future<Result<ReminderExtendResult>> extendReminder({
+    required Reminder reminder,
+    required String userId,
+    required int minutes,
+    String? chatId,
   });
 }

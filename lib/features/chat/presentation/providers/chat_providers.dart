@@ -28,6 +28,9 @@ part 'chat_providers.g.dart';
 
 const chatPageSize = 50;
 
+/// Máximo de teléfonos en una búsqueda `client_phone:` (largo de URL).
+const maxSearchPhones = 50;
+
 /// Umbral local de Pendientes (minutos sin actividad): rango y valor por defecto.
 const pendingThresholdMin = 1;
 const pendingThresholdMax = 20;
@@ -535,6 +538,22 @@ class ChatListController extends _$ChatListController {
     _loadFirst(refine: true);
   }
 
+  /// Tarjeta "Clientes importantes" (BO: pestaña Todos + búsqueda por los
+  /// teléfonos): una sola carga con skeleton.
+  /// Se limita a [maxSearchPhones] para no exceder la longitud de la URL.
+  void searchPhones(List<String> phones) {
+    if (phones.isEmpty) return;
+    if (phones.length > maxSearchPhones) {
+      phones = phones.sublist(0, maxSearchPhones);
+    }
+    state = state.copyWith(
+      tab: ChatTab.all,
+      searchMode: SearchMode.phone,
+      searchText: phones.join(','),
+    );
+    _loadFirst();
+  }
+
   void setMode(SearchMode mode) {
     if (mode == state.searchMode) return;
     state = state.copyWith(searchMode: mode);
@@ -609,5 +628,30 @@ class ChatListController extends _$ChatListController {
     state = state.copyWith(
       items: [for (final c in state.items) c.id == chat.id ? chat : c],
     );
+  }
+
+  /// Refleja en la lista una acción hecha desde una fila (o la hoja de
+  /// acciones): aplica [change] sobre el chat VIGENTE [id] (no sobre una copia
+  /// previa al request: conserva lo que llegó por realtime mientras tanto); si
+  /// dejó de pertenecer a la pestaña activa lo quita; si ya no está en la
+  /// lista no toca nada. Siempre pide una recarga coalescida.
+  Future<void> applyLocalChange(String id, Chat Function(Chat) change) async {
+    final userId = state.tab == ChatTab.assigned
+        ? (await ref.read(apiUserProvider.future))?.id
+        : null;
+    if (!ref.mounted) return;
+    final s = state;
+    final idx = s.items.indexWhere((c) => c.id == id);
+    if (idx >= 0) {
+      final chat = change(s.items[idx]);
+      final leaves = chatLeavesTab(s.tab, chat, userId: userId);
+      state = s.copyWith(
+        items: [
+          for (var i = 0; i < s.items.length; i++)
+            if (i != idx) s.items[i] else if (!leaves) chat,
+        ],
+      );
+    }
+    poll();
   }
 }
