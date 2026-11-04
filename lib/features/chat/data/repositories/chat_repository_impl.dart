@@ -86,11 +86,8 @@ class ChatRepositoryImpl implements ChatRepository {
         });
     }
     p.addAll(q.advanced.toParams());
-    final text = q.searchText.trim();
-    if (text.isNotEmpty) {
-      final prefix = q.searchMode.prefix;
-      p['search'] = prefix == null ? text : '$prefix,$text';
-    }
+    final search = chatSearchParam(q.searchMode, q.searchText);
+    if (search != null) p['search'] = search;
     if (q.cursor != null) {
       p['last_message_timestamp'] = q.cursor;
       if (q.cursorId != null) p['last_message_id'] = q.cursorId;

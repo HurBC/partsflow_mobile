@@ -18,11 +18,31 @@ enum SearchMode {
   phone('Teléfono', 'client_phone:'),
   plate('Patente', 'car_plate:'),
   note('Nota', 'client_note:'),
-  responsible('Responsable', 'responsible:');
+  responsible('Responsable', 'responsible:'),
+
+  /// Prefijos de pedido del BO (CrmChatsTop / chatSearchPrefixes.ts).
+  orderId('Pedido', 'order_id:'),
+  orderNote('Nota de pedido', 'order_note:');
 
   const SearchMode(this.label, this.prefix);
   final String label;
   final String? prefix;
+}
+
+/// Valor del param `search` de `chat/search/` (mismo formato que el BO:
+/// `<prefijo>,<texto>`). Vacío si no hay texto. En `order_id:` el servidor
+/// espera enteros (`orders__id__in`): se conservan solo los números (admite
+/// `#123`, `123 456`, `123,456`); si no hay ninguno se envía el texto tal cual.
+String? chatSearchParam(SearchMode mode, String text) {
+  final t = text.trim();
+  if (t.isEmpty) return null;
+  final prefix = mode.prefix;
+  if (prefix == null) return t;
+  if (mode == SearchMode.orderId) {
+    final ids = RegExp(r'\d+').allMatches(t).map((m) => m.group(0)!).toList();
+    if (ids.isNotEmpty) return '$prefix,${ids.join(',')}';
+  }
+  return '$prefix,$t';
 }
 
 /// Subfiltros locales (hoja "Filtrar chats").

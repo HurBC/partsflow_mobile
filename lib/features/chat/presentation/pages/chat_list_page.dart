@@ -581,6 +581,8 @@ IconData searchModeIcon(SearchMode m) => switch (m) {
   SearchMode.plate => Icons.directions_car_outlined,
   SearchMode.note => Icons.description_outlined,
   SearchMode.responsible => Icons.badge_outlined,
+  SearchMode.orderId => Icons.receipt_long_outlined,
+  SearchMode.orderNote => Icons.sticky_note_2_outlined,
 };
 
 /// Modo de búsqueda a la izquierda de la barra (equivale a SEARCH_MODES del BO).
