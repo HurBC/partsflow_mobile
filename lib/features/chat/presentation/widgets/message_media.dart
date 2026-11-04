@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../utils/image_sizing.dart';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -85,7 +86,7 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView> {
   bool _loading = false;
   bool _ready = false;
   bool _playing = false;
-  Duration _pos = Duration.zero;
+  final ValueNotifier<Duration> _posN = ValueNotifier(Duration.zero);
   Duration? _dur;
 
   @override
@@ -101,6 +102,7 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView> {
       s.cancel();
     }
     _player?.dispose();
+    _posN.dispose();
     super.dispose();
   }
 
@@ -157,10 +159,8 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView> {
             if (s.processingState == ProcessingState.completed) {
               player.pause();
               player.seek(Duration.zero);
-              setState(() {
-                _playing = false;
-                _pos = Duration.zero;
-              });
+              _posN.value = Duration.zero;
+              setState(() => _playing = false);
             } else {
               setState(() => _playing = s.playing);
             }
@@ -168,7 +168,9 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView> {
         )
         ..add(
           player.positionStream.listen((p) {
-            if (mounted) setState(() => _pos = p);
+            if (!mounted) return;
+            final d = (p - _posN.value).inMilliseconds.abs();
+            if (d >= 200 || p == Duration.zero || p == _dur) _posN.value = p;
           }),
         );
       if (!mounted) return;
@@ -201,8 +203,6 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView> {
   Widget build(BuildContext context) {
     final total = _dur ?? Duration.zero;
     final max = total.inMilliseconds.toDouble();
-    final value = max <= 0 ? 0.0 : _pos.inMilliseconds.clamp(0, max).toDouble();
-    final shown = _ready && _playing || _pos > Duration.zero ? _pos : total;
     return SizedBox(
       width: 220,
       child: Row(
@@ -249,22 +249,40 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView> {
                     inactiveTrackColor: widget.color.withValues(alpha: 0.3),
                     thumbColor: widget.color,
                   ),
-                  child: Slider(
-                    value: value,
-                    max: max <= 0 ? 1 : max,
-                    onChanged: _ready && max > 0
-                        ? (v) =>
-                              _player?.seek(Duration(milliseconds: v.round()))
-                        : null,
+                  child: ValueListenableBuilder<Duration>(
+                    valueListenable: _posN,
+                    builder: (_, pos, _) => Slider(
+                      value: max <= 0
+                          ? 0.0
+                          : pos.inMilliseconds.clamp(0, max).toDouble(),
+                      max: max <= 0 ? 1 : max,
+                      onChanged: _ready && max > 0
+                          ? (v) {
+                              final d = Duration(milliseconds: v.round());
+                              _posN.value = d;
+                              _player?.seek(d);
+                            }
+                          : null,
+                    ),
                   ),
                 ),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Padding(
                     padding: const EdgeInsets.only(left: 12),
-                    child: Text(
-                      total == Duration.zero && !_ready ? 'Audio' : mmss(shown),
-                      style: TextStyle(fontSize: 12, color: widget.color),
+                    child: ValueListenableBuilder<Duration>(
+                      valueListenable: _posN,
+                      builder: (_, pos, _) {
+                        final shown = _ready && _playing || pos > Duration.zero
+                            ? pos
+                            : total;
+                        return Text(
+                          total == Duration.zero && !_ready
+                              ? 'Audio'
+                              : mmss(shown),
+                          style: TextStyle(fontSize: 12, color: widget.color),
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -295,6 +313,7 @@ class VideoMessageView extends ConsumerStatefulWidget {
 
 class _VideoMessageViewState extends ConsumerState<VideoMessageView> {
   MediaPreview? _preview;
+  Uint8List? _thumbBytes;
   bool _busy = false;
 
   @override
@@ -307,7 +326,13 @@ class _VideoMessageViewState extends ConsumerState<VideoMessageView> {
           .mediaPreview(RemoteMediaKind.video, m.mediaId!, m.replyId)
           .then((r) {
             if (mounted && r is Ok<MediaPreview>) {
-              setState(() => _preview = r.value);
+              setState(() {
+                _preview = r.value;
+                final t = r.value.thumbnailBytes;
+                _thumbBytes = t == null
+                    ? null
+                    : (t is Uint8List ? t : Uint8List.fromList(t));
+              });
             }
           });
     }
@@ -342,7 +367,7 @@ class _VideoMessageViewState extends ConsumerState<VideoMessageView> {
   @override
   Widget build(BuildContext context) {
     final pf = PfColors.of(context);
-    final thumb = _preview?.thumbnailBytes;
+    final thumb = _thumbBytes;
     final dur = _preview?.durationSeconds;
     return Semantics(
       button: true,
@@ -361,7 +386,8 @@ class _VideoMessageViewState extends ConsumerState<VideoMessageView> {
                 children: [
                   if (thumb != null)
                     Image.memory(
-                      Uint8List.fromList(thumb),
+                      thumb,
+                      cacheWidth: decodePx(context, 200),
                       fit: BoxFit.cover,
                       errorBuilder: (_, _, _) => const SizedBox.shrink(),
                     ),
@@ -765,6 +791,7 @@ class LocalMediaView extends StatelessWidget {
               File(path),
               width: 200,
               height: 150,
+              cacheWidth: decodePx(context, 200),
               fit: BoxFit.cover,
               errorBuilder: (_, _, _) => Container(
                 width: 200,

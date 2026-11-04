@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:partsflow_mobile/core/network/dio_client.dart';
 import 'package:partsflow_mobile/core/providers/auth_state_provider.dart';
+import 'package:partsflow_mobile/core/utils/reload_gate.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart'
     show ListStatus, failureMessage;
@@ -76,9 +77,13 @@ class OrdersListState {
 class OrdersListController extends _$OrdersListController {
   int _seq = 0;
   int _countSeq = 0;
+  late ReloadGate _gate;
 
   @override
   OrdersListState build() {
+    // Un gate por build (la instancia del Notifier puede reutilizarse).
+    final gate = _gate = ReloadGate();
+    ref.onDispose(gate.dispose);
     // Al cambiar la sesión se descarta todo y se vuelve a cargar.
     ref.watch(authStateProvider);
     Future.microtask(() {
@@ -89,7 +94,13 @@ class OrdersListController extends _$OrdersListController {
 
   String? get _search => searchParamFor(state.searchText);
 
-  Future<String?> _loadFirst({bool skeleton = true, bool merge = false}) async {
+  Future<String?> _loadFirst({bool skeleton = true, bool merge = false}) =>
+      _gate.track(() => _doLoadFirst(skeleton: skeleton, merge: merge));
+
+  Future<String?> _doLoadFirst({
+    bool skeleton = true,
+    bool merge = false,
+  }) async {
     final seq = ++_seq;
     if (skeleton) {
       state = state.copyWith(
@@ -114,6 +125,7 @@ class OrdersListController extends _$OrdersListController {
     if (!ref.mounted || seq != _seq) return null;
     switch (result) {
       case Ok(:final value):
+        _gate.markSuccess();
         var items = value.items;
         var hasMore = value.hasMore;
         var pages = 1;
@@ -169,10 +181,17 @@ class OrdersListController extends _$OrdersListController {
   /// Pull-to-refresh: reemplaza la lista sin skeleton. Devuelve el error, si hubo.
   Future<String?> refresh() => _loadFirst(skeleton: false);
 
-  /// Sondeo / refresco tras una acción: primera página mezclada con lo cargado.
+  /// Refresco tras una acción del usuario: sin cooldown.
   Future<void> poll() async {
     if (state.status != ListStatus.data || state.loadingMore) return;
     await _loadFirst(skeleton: false, merge: true);
+  }
+
+  /// Automático (tick del poller, volver a primer plano): se omite si hay una
+  /// carga reciente y reutiliza la que está en vuelo.
+  Future<void> autoPoll() async {
+    if (state.status != ListStatus.data || state.loadingMore) return;
+    await _gate.auto(() => _doLoadFirst(skeleton: false, merge: true));
   }
 
   void setStage(OrderStage stage) {

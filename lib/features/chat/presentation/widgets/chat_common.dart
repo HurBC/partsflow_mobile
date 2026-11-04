@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/image_sizing.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.dart';
@@ -44,6 +45,7 @@ class ChatAvatar extends StatelessWidget {
               url,
               width: size,
               height: size,
+              cacheWidth: decodePx(context, size),
               fit: BoxFit.cover,
               errorBuilder: (_, _, _) => initials,
               loadingBuilder: (_, child, progress) =>

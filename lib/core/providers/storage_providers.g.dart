@@ -50,6 +50,47 @@ final class SecureStorageProvider
 
 String _$secureStorageHash() => r'6a69560aed0e0b9fb1131c1be79e79d9343bdf97';
 
+@ProviderFor(tokenStore)
+final tokenStoreProvider = TokenStoreProvider._();
+
+final class TokenStoreProvider
+    extends $FunctionalProvider<TokenStore, TokenStore, TokenStore>
+    with $Provider<TokenStore> {
+  TokenStoreProvider._()
+    : super(
+        from: null,
+        argument: null,
+        retry: null,
+        name: r'tokenStoreProvider',
+        isAutoDispose: false,
+        dependencies: null,
+        $allTransitiveDependencies: null,
+      );
+
+  @override
+  String debugGetCreateSourceHash() => _$tokenStoreHash();
+
+  @$internal
+  @override
+  $ProviderElement<TokenStore> $createElement($ProviderPointer pointer) =>
+      $ProviderElement(pointer);
+
+  @override
+  TokenStore create(Ref ref) {
+    return tokenStore(ref);
+  }
+
+  /// {@macro riverpod.override_with_value}
+  Override overrideWithValue(TokenStore value) {
+    return $ProviderOverride(
+      origin: this,
+      providerOverride: $SyncValueProvider<TokenStore>(value),
+    );
+  }
+}
+
+String _$tokenStoreHash() => r'0496e8b30801f92e85214cf789ee199041f10280';
+
 @ProviderFor(localStorage)
 final localStorageProvider = LocalStorageProvider._();
 

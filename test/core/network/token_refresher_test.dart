@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:partsflow_mobile/core/network/token_refresher.dart';
 import 'package:partsflow_mobile/core/storage/secure_storage.dart';
 import 'package:partsflow_mobile/core/storage/storage_keys.dart';
+import 'package:partsflow_mobile/core/storage/token_store.dart';
 
 class FakeStorage implements SecureStorage {
   final Map<String, String> data = {};
@@ -88,11 +89,13 @@ void main() {
       final t = jwt(at(const Duration(hours: 1)));
       final early = TokenRefresher(
         storage: FakeStorage(),
+        tokens: TokenStore(FakeStorage()),
         baseUrl: 'http://x',
         clock: () => now,
       );
       final late = TokenRefresher(
         storage: FakeStorage(),
+        tokens: TokenStore(FakeStorage()),
         baseUrl: 'http://x',
         clock: () => now.add(const Duration(hours: 2)),
       );
@@ -117,6 +120,7 @@ void main() {
         ..httpClientAdapter = adapter;
       refresher = TokenRefresher(
         storage: storage,
+        tokens: TokenStore(storage),
         baseUrl: 'http://x',
         dio: dio,
       );

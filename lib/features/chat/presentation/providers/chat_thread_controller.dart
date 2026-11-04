@@ -5,6 +5,7 @@ import 'package:partsflow_mobile/core/realtime/realtime_event.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
 import 'package:partsflow_mobile/core/utils/json_utils.dart';
 import 'package:partsflow_mobile/core/utils/pf_log.dart';
+import 'package:partsflow_mobile/core/utils/reload_gate.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/domain/entities/api_user.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
@@ -105,13 +106,19 @@ typedef ActionResult = ({bool ok, String message});
 class ChatThread extends _$ChatThread {
   int _localSeq = 0;
   Timer? _rtTimer;
+  late ReloadGate _reloadGate;
 
   @override
   ThreadState build(Chat chat) {
+    // Un gate por build (la instancia del Notifier puede reutilizarse).
+    final gate = _reloadGate = ReloadGate(
+      signalGap: const Duration(milliseconds: 400),
+    );
     final sub = ref.read(realtimeProvider.notifier).events.listen(_onRealtime);
     ref.onDispose(() {
       sub.cancel();
       _rtTimer?.cancel();
+      gate.dispose();
     });
     Future.microtask(() async {
       if (!ref.mounted) return;
@@ -124,13 +131,17 @@ class ChatThread extends _$ChatThread {
 
   Future<ApiUser?> _me() => ref.read(apiUserProvider.future);
 
-  Future<void> _loadFirstPage() async {
+  /// Carga explícita de la primera página (inicial, reintento, tras enviar).
+  Future<void> _loadFirstPage() => _reloadGate.track(_doLoadFirstPage);
+
+  Future<void> _doLoadFirstPage() async {
     final r = await ref
         .read(chatRepositoryProvider)
         .history(state.chat.phone, 0, chatPageSize);
     if (!ref.mounted) return;
     switch (r) {
       case Ok(:final value):
+        _reloadGate.markSuccess();
         state = state.copyWith(
           messages: mergeMessages(state.messages, value),
           status: ListStatus.data,
@@ -157,10 +168,11 @@ class ChatThread extends _$ChatThread {
     if (ref.mounted) _markReadIfNeeded();
   }
 
-  /// Sondeo: trae la primera página y la mezcla.
+  /// Sondeo automático (poller / primer plano): trae la primera página y la
+  /// mezcla; se omite si hay una carga reciente o en vuelo.
   Future<void> poll() async {
     if (state.status != ListStatus.data) return;
-    await _loadFirstPage();
+    await _reloadGate.auto(_doLoadFirstPage);
   }
 
   // ---- Tiempo real ---------------------------------------------------------
@@ -178,7 +190,7 @@ class ChatThread extends _$ChatThread {
           final p = phoneOfItem(i);
           return p == null || p == phoneDigits(chat.phone);
         });
-        if (mine.isNotEmpty) _scheduleReload();
+        if (mine.isNotEmpty) _signalReload();
       case RealtimeStatusUpdates(:final items):
         _applyStatusUpdates(items);
       case RealtimeClientChanged(:final data):
@@ -186,11 +198,23 @@ class ChatThread extends _$ChatThread {
     }
   }
 
+  /// Mensajes nuevos de este chat: nunca se pierde, se coalesce.
+  void _signalReload() {
+    _reloadGate.signal(() async {
+      // Si aún no es data hay una carga inicial/reintento (o falló); la carga
+      // inicial ya trae los mensajes nuevos, así que no se pierde la señal.
+      if (!ref.mounted || state.status != ListStatus.data) return;
+      await _doLoadFirstPage();
+    });
+  }
+
   /// Recarga la primera página (mezclada) con un pequeño agrupamiento.
   void _scheduleReload() {
     if (_rtTimer?.isActive ?? false) return;
     _rtTimer = Timer(const Duration(milliseconds: 400), () {
-      if (ref.mounted && state.status == ListStatus.data) _loadFirstPage();
+      if (ref.mounted && state.status == ListStatus.data) {
+        _reloadGate.auto(_doLoadFirstPage);
+      }
     });
   }
 

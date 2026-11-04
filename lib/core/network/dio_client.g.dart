@@ -48,7 +48,7 @@ final class TokenRefresherProvider
   }
 }
 
-String _$tokenRefresherHash() => r'9e3fed88253cbaf41ed0090c4c5c892093a6e422';
+String _$tokenRefresherHash() => r'3586dd731cb82a0900b70c22883f50dacd381f49';
 
 @ProviderFor(dio)
 final dioProvider = DioProvider._();
@@ -88,4 +88,4 @@ final class DioProvider extends $FunctionalProvider<Dio, Dio, Dio>
   }
 }
 
-String _$dioHash() => r'341311f569097d2c2c162482d486aba54a41eca7';
+String _$dioHash() => r'92eaabdd001609697af4aac237ee58261f2124b7';

@@ -164,6 +164,8 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       final x = await _picker.pickImage(
         source: ImageSource.camera,
         imageQuality: 85,
+        maxWidth: 2048,
+        maxHeight: 2048,
       );
       if (x == null) return;
       await _preview([
@@ -184,6 +186,8 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       final xs = await _picker.pickMultipleMedia(
         limit: ChatThread.maxBatch,
         imageQuality: 85,
+        maxWidth: 2048,
+        maxHeight: 2048,
       );
       if (xs.isEmpty) return;
       final files = <OutgoingAttachment>[];

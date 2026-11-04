@@ -292,7 +292,9 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     int? best;
     for (var i = 0; i < _lastEntries.length; i++) {
       final e = _lastEntries[i];
-      if (e is! MsgEntry || _keys[e.message.id]?.currentContext == null) continue;
+      if (e is! MsgEntry || _keys[e.message.id]?.currentContext == null) {
+        continue;
+      }
       if (best == null || (i - idx).abs() < (best - idx).abs()) best = i;
     }
     return best;
@@ -422,6 +424,25 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     _classify(s);
     final entries = buildTimeline(s.messages, s.pending, s.notes);
     _lastEntries = entries;
+    // Key estable por entrada (una sola vez por build) para que Flutter case
+    // filas por identidad y no por posición.
+    final entryKeys = <ValueKey<String>>[];
+    final indexByKey = <Object, int>{};
+    for (var k = 0; k < entries.length; k++) {
+      var base = switch (entries[k]) {
+        DayEntry(:final date) => 'd:${date.year}-${date.month}-${date.day}',
+        NoteEntry(:final note) =>
+          'n:${note.date.microsecondsSinceEpoch}:${note.text.hashCode}',
+        MsgEntry(:final message) => 'm:${message.id}',
+      };
+      // Evita claves duplicadas entre hermanos (p. ej. notas idénticas).
+      var key = ValueKey<String>(base);
+      for (var dup = 1; indexByKey.containsKey(key); dup++) {
+        key = ValueKey<String>('$base#$dup');
+      }
+      entryKeys.add(key);
+      indexByKey[key] = k;
+    }
     final reduce = MediaQuery.disableAnimationsOf(context);
     if (entries.isEmpty) {
       return Center(
@@ -441,9 +462,12 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
         reverse: true,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         itemCount: entries.length + (s.loadingOlder ? 1 : 0),
+        findChildIndexCallback: (key) =>
+            key is ValueKey<String> ? indexByKey[key] : null,
         itemBuilder: (context, i) {
           if (i >= entries.length) {
             return const Padding(
+              key: ValueKey<String>('loading-older'),
               padding: EdgeInsets.all(12),
               child: Center(
                 child: SizedBox(
@@ -461,6 +485,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
           final joinedNext =
               e is MsgEntry && messagesJoined(entries, i - 1, e.message, myId);
           return Padding(
+            key: entryKeys[i],
             padding: EdgeInsets.fromLTRB(
               0,
               joinedPrev ? 1 : 4,

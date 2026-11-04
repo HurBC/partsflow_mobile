@@ -54,7 +54,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
             !ref.read(apiUserProvider).isLoading) {
           ref.invalidate(apiUserProvider);
         }
-        ref.read(chatListControllerProvider.notifier).poll();
+        ref.read(chatListControllerProvider.notifier).autoPoll();
       },
     )..start();
   }

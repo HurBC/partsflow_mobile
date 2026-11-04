@@ -6,6 +6,8 @@ import 'package:partsflow_mobile/core/providers/auth_state_provider.dart';
 import 'package:partsflow_mobile/core/providers/storage_providers.dart';
 import 'package:partsflow_mobile/core/storage/storage_keys.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
+import 'package:partsflow_mobile/core/realtime/realtime_event.dart';
+import 'package:partsflow_mobile/core/utils/reload_gate.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/data/datasources/chat_remote_datasource.dart';
@@ -151,23 +153,31 @@ class ChatListState {
 @Riverpod(keepAlive: true)
 class ChatListController extends _$ChatListController {
   int _seq = 0;
-  Timer? _rtTimer;
+  late ReloadGate _gate;
+  bool _signalPending = false;
 
   @override
   ChatListState build() {
+    // Un gate por build: Riverpod reutiliza esta instancia al reconstruir y el
+    // gate anterior queda dispuesto.
+    final gate = _gate = ReloadGate(signalGap: const Duration(seconds: 1));
+    _signalPending = false;
     // Al cambiar la sesión se descarta todo y se vuelve a cargar.
     ref.watch(authStateProvider);
-    // Tiempo real: cualquier evento relevante recarga la primera página (se
-    // suma al sondeo, no lo reemplaza).
-    final sub = ref.read(realtimeProvider.notifier).events.listen((_) {
-      if (_rtTimer?.isActive ?? false) return; // como mucho 1 recarga por s
-      _rtTimer = Timer(const Duration(seconds: 1), () {
-        if (ref.mounted) poll();
-      });
+    // Tiempo real: Resync -> auto (cooldown); cualquier otro evento trae datos
+    // nuevos -> signal (coalesce, nunca se pierde; sustituye al throttle de
+    // 1 s porque la señal ya agrupa por vuelo y cooldown).
+    final sub = ref.read(realtimeProvider.notifier).events.listen((e) {
+      if (!ref.mounted) return;
+      if (e is RealtimeResync) {
+        autoPoll();
+      } else {
+        _signalPoll();
+      }
     });
     ref.onDispose(() {
       sub.cancel();
-      _rtTimer?.cancel();
+      gate.dispose();
     });
     Future.microtask(() {
       if (ref.mounted) _loadFirst();
@@ -200,7 +210,13 @@ class ChatListController extends _$ChatListController {
     _loadFirst();
   }
 
-  Future<String?> _loadFirst({bool skeleton = true, bool merge = false}) async {
+  Future<String?> _loadFirst({bool skeleton = true, bool merge = false}) =>
+      _gate.track(() => _doLoadFirst(skeleton: skeleton, merge: merge));
+
+  Future<String?> _doLoadFirst({
+    bool skeleton = true,
+    bool merge = false,
+  }) async {
     final seq = ++_seq;
     if (skeleton) {
       state = state.copyWith(
@@ -262,6 +278,7 @@ class ChatListController extends _$ChatListController {
     if (!ref.mounted || seq != _seq) return null;
     switch (result) {
       case Ok(:final value):
+        _gate.markSuccess();
         var items = value.chats;
         var cursor = value.cursor;
         var cursorId = value.cursorId;
@@ -303,11 +320,39 @@ class ChatListController extends _$ChatListController {
   Future<String?> refresh() => _loadFirst(skeleton: false);
 
   /// Sondeo / refresco tras una acción: primera página mezclada con lo ya cargado.
+  /// Explícito (tras una acción del usuario): sin cooldown.
   Future<void> poll() async {
     if (state.status != ListStatus.data || state.loadingMore) return;
     // Los resultados de búsqueda no se sondean.
     if (state.isGlobalSearch) return;
     await _loadFirst(skeleton: false, merge: true);
+  }
+
+  /// Automático (Resync, tick del poller, volver a primer plano): se omite si
+  /// hay una carga reciente y reutiliza la que está en vuelo.
+  Future<void> autoPoll() async {
+    if (state.status != ListStatus.data || state.loadingMore) return;
+    if (state.isGlobalSearch) return;
+    await _gate.auto(
+      () => _doLoadFirst(skeleton: false, merge: true),
+    );
+  }
+
+  /// Señal de datos nuevos (evento realtime): nunca se pierde, se coalesce.
+  void _signalPoll() {
+    _gate.signal(() async {
+      if (!ref.mounted) return;
+      // loadMore en curso: se recarga al terminar (ver loadMore).
+      if (state.loadingMore) {
+        _signalPending = true;
+        return;
+      }
+      // Búsqueda global: salir de ella (setSearch/setTab/setMode) ya dispara
+      // una carga explícita, así que no hace falta pendiente. Estado no-data:
+      // la carga inicial/reintento en curso trae datos frescos.
+      if (state.status != ListStatus.data || state.isGlobalSearch) return;
+      await _doLoadFirst(skeleton: false, merge: true);
+    });
   }
 
   void setTab(ChatTab tab) {
@@ -353,7 +398,19 @@ class ChatListController extends _$ChatListController {
             cursorId: s.cursorId,
           ),
         );
-    if (!ref.mounted || seq != _seq) return;
+    if (!ref.mounted) return;
+    if (seq != _seq) {
+      // Una carga de primera página reemplazó la lista: ya trae lo nuevo.
+      _signalPending = false;
+      return;
+    }
+    if (_signalPending) {
+      _signalPending = false;
+      // Tras terminar loadMore (más abajo) hay que recargar la señal perdida.
+      scheduleMicrotask(() {
+        if (ref.mounted) _signalPoll();
+      });
+    }
     switch (result) {
       case Ok(:final value):
         final ids = state.items.map((c) => c.id).toSet();

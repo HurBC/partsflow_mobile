@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/image_sizing.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.dart';
@@ -471,11 +472,13 @@ class _JuliaAvatar extends StatelessWidget {
           curve: Curves.easeOutBack,
           builder: (context, scale, child) =>
               Transform.scale(scale: scale, child: child),
-          child: TweenAnimationBuilder<double>(
-            tween: Tween(begin: 1, end: 0),
-            duration: const Duration(milliseconds: 1200),
-            curve: Curves.easeOutCubic,
-            builder: (context, t, _) => avatar(t),
+          child: RepaintBoundary(
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 1, end: 0),
+              duration: const Duration(milliseconds: 1200),
+              curve: Curves.easeOutCubic,
+              builder: (context, t, _) => avatar(t),
+            ),
           ),
         ),
       ],
@@ -615,7 +618,7 @@ class _ImageContent extends StatelessWidget {
     final pf = PfColors.of(context);
     Widget placeholder(IconData icon) => Container(
       width: 200,
-      height: 120,
+      height: 150,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: bg,
@@ -635,6 +638,7 @@ class _ImageContent extends StatelessWidget {
                 child: InteractiveViewer(
                   child: Image.network(
                     url,
+                    cacheWidth: kMaxFullscreenDecodePx,
                     errorBuilder: (_, _, _) => const Icon(
                       Icons.broken_image_outlined,
                       color: Colors.white70,
@@ -664,6 +668,7 @@ class _ImageContent extends StatelessWidget {
           url,
           width: 200,
           height: 150,
+          cacheWidth: decodePx(context, 200),
           fit: BoxFit.cover,
           loadingBuilder: (_, child, progress) =>
               progress == null ? child : placeholder(Icons.image_outlined),

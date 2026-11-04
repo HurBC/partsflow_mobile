@@ -64,7 +64,7 @@ final class ChatThreadProvider
   }
 }
 
-String _$chatThreadHash() => r'c37ece9f9eb6f52b6d9eb74321b8569c96589674';
+String _$chatThreadHash() => r'f5a0137b88242f9cd43cbd90f1f126cfd336cfe4';
 
 /// Conversación de un chat. La clave es el Chat (igualdad por id): la primera
 /// instancia se crea con el Chat recibido por `extra` desde la lista.

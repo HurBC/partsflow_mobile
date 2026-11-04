@@ -37,7 +37,7 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
     _poller = ForegroundPoller(
       interval: const Duration(seconds: 30),
       isEnabled: () => mounted && !_covered,
-      onTick: () => ref.read(ordersListControllerProvider.notifier).poll(),
+      onTick: () => ref.read(ordersListControllerProvider.notifier).autoPoll(),
     )..start();
   }
 

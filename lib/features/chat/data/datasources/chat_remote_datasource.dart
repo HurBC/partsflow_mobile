@@ -13,6 +13,15 @@ class ChatRemoteDataSource {
 
   final Dio _dio;
 
+  /// Dio plano compartido para URLs públicas (S3/Wali): sin interceptores, para
+  /// no enviar jamás el Bearer de SAPI. Una sola instancia por proceso.
+  static final Dio _publicDio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 60),
+    ),
+  );
+
   Future<Object?> searchChats(Map<String, dynamic> params) async =>
       (await _dio.get<Object?>('chat/search/', queryParameters: params)).data;
 
@@ -155,7 +164,7 @@ class ChatRemoteDataSource {
 
   /// Descarga una imagen pública (cliente sin credenciales de SAPI).
   Future<Uint8List> downloadBytes(String url) async {
-    final r = await Dio().get<List<int>>(
+    final r = await _publicDio.get<List<int>>(
       url,
       options: Options(responseType: ResponseType.bytes, receiveTimeout: _long),
     );
