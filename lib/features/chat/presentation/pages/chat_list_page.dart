@@ -338,10 +338,17 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
           Expanded(
             child: ColoredBox(
               color: pf.surface,
-              child: ChatListBody(
-                scroll: _scroll,
-                onRefresh: _refresh,
-                onOpen: _openChat,
+              // La cabecera ya descuenta el inset superior del sistema: sin esto,
+              // los ListView sin padding explícito lo vuelven a sumar (hueco
+              // vacío entre las tarjetas y el primer chat).
+              child: MediaQuery.removePadding(
+                context: context,
+                removeTop: true,
+                child: ChatListBody(
+                  scroll: _scroll,
+                  onRefresh: _refresh,
+                  onOpen: _openChat,
+                ),
               ),
             ),
           ),
