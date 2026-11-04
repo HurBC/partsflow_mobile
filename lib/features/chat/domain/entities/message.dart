@@ -157,6 +157,12 @@ class Message {
     bool clearError = false,
     double? uploadProgress,
     bool clearProgress = false,
+    String? mediaUrl,
+    String? mediaFilename,
+    String? mediaId,
+    String? mediaMime,
+    String? localPath,
+    bool? mediaPending,
   }) => Message(
     id: id ?? this.id,
     messageId: messageId,
@@ -170,8 +176,8 @@ class Message {
     agent: agent,
     responsibleId: responsibleId,
     source: source,
-    mediaUrl: mediaUrl,
-    mediaFilename: mediaFilename,
+    mediaUrl: mediaUrl ?? this.mediaUrl,
+    mediaFilename: mediaFilename ?? this.mediaFilename,
     quotedBody: quotedBody,
     quotedFrom: quotedFrom,
     quotedWid: quotedWid,
@@ -181,9 +187,9 @@ class Message {
     longitude: longitude,
     contactNames: contactNames,
     contacts: contacts,
-    mediaId: mediaId,
-    mediaMime: mediaMime,
-    localPath: localPath,
+    mediaId: mediaId ?? this.mediaId,
+    mediaMime: mediaMime ?? this.mediaMime,
+    localPath: localPath ?? this.localPath,
     uploadProgress: clearProgress
         ? null
         : (uploadProgress ?? this.uploadProgress),
@@ -192,7 +198,7 @@ class Message {
     websocketId: websocketId,
     errorCode: errorCode,
     isEdited: isEdited,
-    mediaPending: mediaPending,
+    mediaPending: mediaPending ?? this.mediaPending,
   );
 
   @override
