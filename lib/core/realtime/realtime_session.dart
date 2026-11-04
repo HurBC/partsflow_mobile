@@ -163,6 +163,8 @@ class _Channel {
           final now = DateTime.now().millisecondsSinceEpoch;
           if (e is RealtimeNewMessages) {
             logRtLatency('new_message', e.items, now);
+          } else if (e is RealtimeMessageUpdates) {
+            logRtLatency('message_update', e.items, now);
           } else if (e is RealtimeStatusUpdates) {
             logRtLatency('status_update', e.items, now);
           }

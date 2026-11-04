@@ -55,6 +55,24 @@ void main() {
       expect((e as RealtimeStatusUpdates).items.single['status'], 'read');
     });
 
+    test('chat_list_message_update produce RealtimeMessageUpdates', () {
+      final e = parseRealtimeFrame(
+        _frame({
+          'type': 'chat_list_message_update',
+          'message_update_data': [
+            {
+              'message_id': 'm1',
+              'update_reason': 'media_ready',
+              'media': {'url': 'u', 'pending': false},
+            },
+          ],
+          'whatsapp_provider': 'wali',
+        }),
+      );
+      expect(e, isA<RealtimeMessageUpdates>());
+      expect((e as RealtimeMessageUpdates).items.single['message_id'], 'm1');
+    });
+
     test('los cuatro tipos client_* producen RealtimeClientChanged', () {
       for (final t in const [
         'client_updated',

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:collection/collection.dart';
+import 'package:flutter/foundation.dart';
 import 'package:partsflow_mobile/core/config/perf_flags.dart';
 import 'package:partsflow_mobile/core/errors/failure.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_event.dart';
@@ -141,6 +142,13 @@ class ChatThread extends _$ChatThread {
   Timer? _rtTimer;
   late ReloadGate _reloadGate;
 
+  /// Red de seguridad de media pendiente: un timer por mensaje con
+  /// `mediaPending` y una sola recarga dirigida por mensaje.
+  final Map<String, Timer> _mediaTimers = {};
+  final Set<String> _mediaWatched = {};
+  @visibleForTesting
+  static Duration mediaPendingTimeout = const Duration(seconds: 10);
+
   @override
   ThreadState build(ChatKey key) {
     final chat = key.initial;
@@ -149,9 +157,14 @@ class ChatThread extends _$ChatThread {
       signalGap: const Duration(milliseconds: 400),
     );
     final sub = ref.read(realtimeProvider.notifier).events.listen(_onRealtime);
+    listenSelf((_, next) => _watchPendingMedia(next.messages));
     ref.onDispose(() {
       sub.cancel();
       _rtTimer?.cancel();
+      for (final t in _mediaTimers.values) {
+        t.cancel();
+      }
+      _mediaTimers.clear();
       gate.dispose();
     });
     Future.microtask(() async {
@@ -231,6 +244,18 @@ class ChatThread extends _$ChatThread {
           );
         }
         if (!patched) _signalReload();
+      case RealtimeMessageUpdates(:final items):
+        final mine = items.where((i) => _isForThisChat(i, chat) ?? true);
+        if (mine.isEmpty) return;
+        final sw = pfDebugLog ? (Stopwatch()..start()) : null;
+        final patched =
+            pfPatchThread && _patchMessageUpdates(mine.toList(), items);
+        if (sw != null) {
+          pfLog(
+            'rt-apply thread-update ms=${sw.elapsedMilliseconds} n=${items.length}',
+          );
+        }
+        if (!patched) _signalReload();
       case RealtimeStatusUpdates(:final items):
         _applyStatusUpdates(items);
       case RealtimeClientChanged(:final data):
@@ -281,6 +306,46 @@ class ChatThread extends _$ChatThread {
     final next = applyNewMessages(state.messages, parsed);
     if (next != null) state = state.copyWith(messages: next);
     return true;
+  }
+
+  /// Aplica documentos actualizados (media lista) como upsert local. false si
+  /// hay que recargar (chat sin cargar, pertenencia dudosa o no mapeable).
+  bool _patchMessageUpdates(
+    List<Map<String, dynamic>> mine,
+    List<Map<String, dynamic>> all,
+  ) {
+    if (state.status != ListStatus.data) return false;
+    if (all.any((i) => _isForThisChat(i, state.chat) == null)) return false;
+    final parsed = <Message>[];
+    for (final i in mine) {
+      if (nonEmpty(asStr(i['message_id'])) == null &&
+          nonEmpty(asStr(i['websocket_id'])) == null) {
+        return false;
+      }
+      final m = messageFromJson(i);
+      if (m == null) return false;
+      parsed.add(m);
+    }
+    final next = applyMessageUpdates(state.messages, parsed);
+    if (next != null) state = state.copyWith(messages: next);
+    return true;
+  }
+
+  /// Arma el timer de seguridad de cada mensaje con media pendiente.
+  void _watchPendingMedia(List<Message> messages) {
+    for (final m in messages) {
+      if (!m.mediaPending) continue;
+      final key = m.messageId ?? m.id;
+      if (!_mediaWatched.add(key)) continue;
+      _mediaTimers[key] = Timer(mediaPendingTimeout, () {
+        _mediaTimers.remove(key);
+        if (!ref.mounted) return;
+        final stuck = state.messages.any(
+          (e) => (e.messageId ?? e.id) == key && e.mediaPending,
+        );
+        if (stuck) _signalReload();
+      });
+    }
   }
 
   /// Mensajes nuevos de este chat: nunca se pierde, se coalesce.

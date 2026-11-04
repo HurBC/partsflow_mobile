@@ -339,3 +339,52 @@ ChatListPatch applyClientChange(
   next[idx] = _withLast(c, client: newClient);
   return ChatListPatch(next, needsReload: reload);
 }
+
+/// Actualiza el último mensaje (preview) de los chats cuyo último mensaje es
+/// el documento actualizado de un `chat_list_message_update`. Nunca pide
+/// recarga; si no coincide con ningún último mensaje, null.
+List<Chat>? applyUpdatesToChats(
+  List<Chat> items,
+  List<Map<String, dynamic>> updates, {
+  required Message? Function(Object?) parse,
+}) {
+  var cur = items;
+  var changed = false;
+  for (final u in updates) {
+    final mid = u['message_id']?.toString();
+    final wid = u['websocket_id']?.toString();
+    final hasMid = mid != null && mid.isNotEmpty;
+    final hasWid = wid != null && wid.isNotEmpty;
+    if (!hasMid && !hasWid) continue;
+    final m = parse(u);
+    if (m == null) continue;
+    for (var i = 0; i < cur.length; i++) {
+      final c = cur[i];
+      final last = c.lastMessage;
+      if (last == null) continue;
+      final match =
+          (hasMid && last.messageId == mid) ||
+          (hasWid && last.websocketId == wid);
+      if (!match) continue;
+      final status = m.status;
+      final from = _ackRank[last.ack];
+      final to = status == null ? null : _ackRank[status];
+      final keepAck = to != null && from != null && to < from;
+      final next = ChatLastMessage(
+        flow: m.flow ?? last.flow,
+        ack: (status == null || keepAck) ? last.ack : status,
+        type: m.type,
+        body: m.text ?? last.body,
+        date: last.date,
+        messageId: last.messageId ?? m.messageId,
+        websocketId: last.websocketId ?? m.websocketId,
+      );
+      if (next == last) break;
+      if (cur == items) cur = [...items];
+      cur[i] = _withLast(c, lastMessage: next);
+      changed = true;
+      break;
+    }
+  }
+  return changed ? cur : null;
+}

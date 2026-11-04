@@ -229,6 +229,7 @@ class ChatListController extends _$ChatListController {
         if (sw != null) {
           final n = switch (e) {
             RealtimeNewMessages(:final items) => items.length,
+            RealtimeMessageUpdates(:final items) => items.length,
             RealtimeStatusUpdates(:final items) => items.length,
             _ => 1,
           };
@@ -479,6 +480,10 @@ class ChatListController extends _$ChatListController {
           tab: s.tab,
           advancedActive: advanced,
           searchActive: searchActive,
+        );
+      case RealtimeMessageUpdates(items: final updates):
+        return ChatListPatch(
+          applyUpdatesToChats(items, updates, parse: messageFromJson),
         );
       case RealtimeStatusUpdates(items: final updates):
         return ChatListPatch(applyStatusToChats(items, updates));
