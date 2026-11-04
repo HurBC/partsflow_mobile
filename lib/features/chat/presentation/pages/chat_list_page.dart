@@ -13,11 +13,13 @@ import 'package:partsflow_mobile/features/auth/presentation/providers/auth_provi
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_extras.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_query.dart';
+import 'package:partsflow_mobile/features/chat/presentation/providers/action_required_provider.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_extras_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_list_view_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_search_provider.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_row_actions.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/action_required_bar.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_common.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_filters_sheet.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_motion.dart';
@@ -65,6 +67,8 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
           ref.invalidate(apiUserProvider);
         }
         ref.read(chatListControllerProvider.notifier).autoPoll();
+        // Watchdog: refresca las tarjetas (con tope de frecuencia propio).
+        ref.read(actionRequiredProvider.notifier).refresh();
       },
     )..start();
   }
@@ -117,6 +121,29 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
     if (!mounted) return;
     _covered = false;
     ref.read(chatListControllerProvider.notifier).poll();
+  }
+
+  /// Tap en una tarjeta. Importantes: igual que el BO (pestaña Todos + búsqueda
+  /// por esos teléfonos). Pedidos: hoja con la lista (máx. 50) y abre el
+  /// detalle del elegido (el BO abre su kanban filtrado por esos ids).
+  Future<void> _openActionCard(ActionCard card) async {
+    final counts = ref.read(actionRequiredProvider).counts;
+    if (card == ActionCard.importantClients) {
+      _debounce?.cancel();
+      _searchController.text = counts.importantClients.join(',');
+      if (_scroll.hasClients) _scroll.jumpTo(0);
+      ref
+          .read(chatListControllerProvider.notifier)
+          .searchPhones(counts.importantClients);
+      setState(() {});
+      return;
+    }
+    final ids = card == ActionCard.toQuote
+        ? counts.toQuoteOrders
+        : counts.optionsAcceptedOrders;
+    final id = await showActionOrdersSheet(context, card: card, orderIds: ids);
+    if (id == null || !mounted) return;
+    context.push(AppRoutes.orderDetail(id));
   }
 
   Future<void> _openFilters() async {
@@ -222,7 +249,11 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
   }
 
   Future<void> _refresh() async {
+    final cards = ref
+        .read(actionRequiredProvider.notifier)
+        .refresh(force: true);
     final err = await ref.read(chatListControllerProvider.notifier).refresh();
+    await cards;
     if (err != null && mounted) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -294,6 +325,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
             },
           ),
           if (!realtime) const _NoRealtimeBanner(),
+          ActionRequiredBar(onOpen: _openActionCard),
           Expanded(
             child: ColoredBox(
               color: pf.surface,

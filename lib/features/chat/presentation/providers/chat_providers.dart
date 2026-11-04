@@ -535,6 +535,18 @@ class ChatListController extends _$ChatListController {
     _loadFirst(refine: true);
   }
 
+  /// Tarjeta "Clientes importantes" (BO: pestaña Todos + búsqueda por los
+  /// teléfonos): una sola carga con skeleton.
+  void searchPhones(List<String> phones) {
+    if (phones.isEmpty) return;
+    state = state.copyWith(
+      tab: ChatTab.all,
+      searchMode: SearchMode.phone,
+      searchText: phones.join(','),
+    );
+    _loadFirst();
+  }
+
   void setMode(SearchMode mode) {
     if (mode == state.searchMode) return;
     state = state.copyWith(searchMode: mode);

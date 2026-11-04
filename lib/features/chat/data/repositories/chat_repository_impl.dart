@@ -8,7 +8,9 @@ import 'package:partsflow_mobile/core/utils/pf_log.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/chat/data/datasources/chat_remote_datasource.dart';
 import 'package:partsflow_mobile/features/chat/domain/cancel_signal.dart';
+import 'package:partsflow_mobile/features/chat/data/mappers/action_required_mapper.dart';
 import 'package:partsflow_mobile/features/chat/data/mappers/chat_mapper.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/action_required_counts.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_extras.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_query.dart';
@@ -201,6 +203,11 @@ class ChatRepositoryImpl implements ChatRepository {
   @override
   Future<Result<bool>> markUnread(String chatId) =>
       _guard(() async => (await _remote.markUnread(chatId)) == 200);
+
+  @override
+  Future<Result<ActionRequiredCounts>> actionRequiredCounts() => _guard(
+    () async => actionRequiredFromJson(await _remote.actionRequiredCounts()),
+  );
 
   @override
   Future<Result<bool>> updateClient(

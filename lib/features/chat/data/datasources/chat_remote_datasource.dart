@@ -72,6 +72,9 @@ class ChatRemoteDataSource {
       )).statusCode ??
       0;
 
+  Future<Object?> actionRequiredCounts() async =>
+      (await _dio.get<Object?>('chat/summary/action-required-counts/')).data;
+
   Future<void> updateClient(String clientId, Map<String, Object?> body) =>
       _dio.patch<Object?>('clients/$clientId/update/', data: body);
 

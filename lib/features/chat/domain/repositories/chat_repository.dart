@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/chat/domain/cancel_signal.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/action_required_counts.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_extras.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_query.dart';
@@ -63,6 +64,9 @@ abstract class ChatRepository {
 
   Future<Result<bool>> markRead(String chatId);
   Future<Result<bool>> markUnread(String chatId);
+
+  /// Pedidos/clientes que requieren acción (`chat/summary/action-required-counts/`).
+  Future<Result<ActionRequiredCounts>> actionRequiredCounts();
 
   /// PATCH de campos del cliente (el repositorio agrega `id`).
   Future<Result<bool>> updateClient(
