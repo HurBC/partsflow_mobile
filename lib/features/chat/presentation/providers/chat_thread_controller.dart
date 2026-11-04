@@ -222,9 +222,15 @@ class ChatThread extends _$ChatThread {
         // chat; si no se puede determinar el chat, se recarga por si acaso.
         final mine = items.where((i) => _isForThisChat(i, chat) ?? true);
         if (mine.isEmpty) return;
-        if (!pfPatchThread || !_patchNewMessages(mine.toList(), items)) {
-          _signalReload();
+        final sw = pfDebugLog ? (Stopwatch()..start()) : null;
+        final patched =
+            pfPatchThread && _patchNewMessages(mine.toList(), items);
+        if (sw != null) {
+          pfLog(
+            'rt-apply thread ms=${sw.elapsedMilliseconds} n=${items.length}',
+          );
         }
+        if (!patched) _signalReload();
       case RealtimeStatusUpdates(:final items):
         _applyStatusUpdates(items);
       case RealtimeClientChanged(:final data):

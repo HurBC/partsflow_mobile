@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:partsflow_mobile/core/realtime/background_closer.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_event.dart';
+import 'package:partsflow_mobile/core/realtime/rt_latency.dart';
 import 'package:partsflow_mobile/core/utils/pf_log.dart';
 
 /// Dos sockets (`chat-list` y `clients`) del subsidiary, con reconexión con
@@ -157,7 +158,15 @@ class _Channel {
     _sub = ws.listen(
       (data) {
         final e = parseRealtimeFrame(data);
-        if (pfDebugLog && e != null) pfLog('rt ${e.runtimeType}');
+        if (pfDebugLog && e != null) {
+          pfLog('rt ${e.runtimeType}');
+          final now = DateTime.now().millisecondsSinceEpoch;
+          if (e is RealtimeNewMessages) {
+            logRtLatency('new_message', e.items, now);
+          } else if (e is RealtimeStatusUpdates) {
+            logRtLatency('status_update', e.items, now);
+          }
+        }
         if (e != null && !_closed) _s.onEvent(e);
       },
       onDone: () => _lost(ws),
