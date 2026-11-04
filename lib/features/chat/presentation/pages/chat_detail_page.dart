@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
 import 'package:partsflow_mobile/core/router/app_routes.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/realtime/chat_poll_policy.dart';
 import 'package:partsflow_mobile/core/utils/foreground_poller.dart';
 import 'package:partsflow_mobile/core/utils/pf_log.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
@@ -68,7 +69,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
       }
     });
     _poller = ForegroundPoller(
-      interval: Duration(seconds: ref.read(realtimeProvider) ? 30 : 10),
+      interval: chatThreadPollEvery(healthy: ref.read(realtimeProvider)),
       isEnabled: () => mounted,
       onTick: () => ref.read(chatThreadProvider(widget.chat).notifier).poll(),
     )..start();
@@ -351,7 +352,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     final pf = PfColors.of(context);
     final s = ref.watch(chatThreadProvider(widget.chat));
     _poller.setInterval(
-      Duration(seconds: ref.watch(realtimeProvider) ? 30 : 10),
+      chatThreadPollEvery(healthy: ref.watch(realtimeProvider)),
     );
     final applies = ref.watch(windowAppliesProvider).value ?? false;
     final me = ref.watch(apiUserProvider).value;

@@ -32,7 +32,9 @@ class AuthInterceptor extends Interceptor {
     var token = await _tokens.readToken();
 
     if (token != null && _refresher.isTokenExpiring(token)) {
-      pfLog('auth: token por vencer antes de ${options.method} ${options.path}');
+      pfLog(
+        'auth: token por vencer antes de ${options.method} ${options.path}',
+      );
       final result = await _refresher.refresh();
       if (result == RefreshResult.rejected) {
         onSessionExpired?.call();

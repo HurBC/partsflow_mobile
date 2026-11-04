@@ -53,7 +53,9 @@ Dio dio(Ref ref) {
   dio.interceptors.add(
     InterceptorsWrapper(
       onRequest: (o, handler) {
-        if (pfDebugLog) o.extra['pf_t0'] = DateTime.now().millisecondsSinceEpoch;
+        if (pfDebugLog) {
+          o.extra['pf_t0'] = DateTime.now().millisecondsSinceEpoch;
+        }
         handler.next(o);
       },
       onResponse: (r, handler) {

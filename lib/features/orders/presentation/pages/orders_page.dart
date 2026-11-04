@@ -39,6 +39,9 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
       isEnabled: () => mounted && !_covered,
       onTick: () => ref.read(ordersListControllerProvider.notifier).autoPoll(),
     )..start();
+    Future.microtask(() {
+      if (mounted) ref.read(ordersListControllerProvider.notifier).onTabShown();
+    });
   }
 
   @override
@@ -72,7 +75,6 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
     await context.push(AppRoutes.orderDetail(order.id), extra: order);
     if (!mounted) return;
     _covered = false;
-    ref.read(ordersListControllerProvider.notifier).poll();
   }
 
   Future<void> _refresh() async {

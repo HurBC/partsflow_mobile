@@ -131,18 +131,20 @@ void main() {
       expect(await ts.readToken(), isNull);
     });
 
-    test('lectura en vuelo durante saveTokens no deja el valor viejo',
-        () async {
-      final st = GatedStorage()..data[StorageKeys.token] = 'old';
-      final ts = TokenStore(st);
-      final read = ts.readToken();
-      final save = ts.saveTokens(token: 'new');
-      st.readGate.complete();
-      st.writeGate.complete();
-      await read;
-      await save;
-      expect(await ts.readToken(), 'new');
-    });
+    test(
+      'lectura en vuelo durante saveTokens no deja el valor viejo',
+      () async {
+        final st = GatedStorage()..data[StorageKeys.token] = 'old';
+        final ts = TokenStore(st);
+        final read = ts.readToken();
+        final save = ts.saveTokens(token: 'new');
+        st.readGate.complete();
+        st.writeGate.complete();
+        await read;
+        await save;
+        expect(await ts.readToken(), 'new');
+      },
+    );
 
     test('write fallido invalida la caché', () async {
       final st = GatedStorage()..data[StorageKeys.token] = 'old';

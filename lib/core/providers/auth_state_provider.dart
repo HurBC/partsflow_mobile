@@ -1,3 +1,4 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:partsflow_mobile/core/network/dio_client.dart';
 import 'package:partsflow_mobile/core/network/token_refresher.dart';
 import 'package:partsflow_mobile/core/providers/storage_providers.dart';
@@ -18,3 +19,12 @@ Future<bool> authState(Ref ref) async {
   }
   return true;
 }
+
+/// Identidad de sesión: `true` solo con sesión activa. Los consumidores de
+/// larga vida (sockets, listas) observan esto y no `authState` completo: un
+/// `invalidate` con la misma sesión pasa por loading conservando el valor
+/// previo, así que este provider no notifica y nada se reconstruye.
+final sessionActiveProvider = Provider<bool>(
+  (ref) => ref.watch(authStateProvider.select((a) => a.value == true)),
+  name: 'sessionActiveProvider',
+);

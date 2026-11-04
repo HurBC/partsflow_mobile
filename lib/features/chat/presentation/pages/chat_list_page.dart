@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
 import 'package:partsflow_mobile/core/router/app_routes.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/realtime/chat_poll_policy.dart';
 import 'package:partsflow_mobile/core/utils/foreground_poller.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
@@ -59,8 +60,8 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
     )..start();
   }
 
-  // Con tiempo real el sondeo baja a 60 s; sin él, 20 s.
-  Duration _pollEvery(bool realtime) => Duration(seconds: realtime ? 60 : 20);
+  // Socket sano: watchdog de 120 s; si no, 20 s.
+  Duration _pollEvery(bool healthy) => chatListPollEvery(healthy: healthy);
 
   @override
   void dispose() {

@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
+import 'package:partsflow_mobile/core/realtime/background_closer.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_event.dart';
 import 'package:partsflow_mobile/core/utils/pf_log.dart';
 
@@ -24,13 +25,15 @@ class RealtimeSession with WidgetsBindingObserver {
   final String subsidiaryId;
   final void Function(RealtimeEvent) onEvent;
 
-  /// true cuando el socket principal (`chat-list`) está abierto.
+  /// true cuando AMBOS sockets (`chat-list` y `clients`) están abiertos.
   final void Function(bool) onConnectedChanged;
 
   late final List<_Channel> _channels;
   bool _disposed = false;
   bool _foreground = true;
   DateTime? _pausedAt;
+  bool _healthy = false;
+  late final BackgroundCloser _closer = BackgroundCloser(onClose: _suspend);
 
   void start() {
     final base = baseUrl.endsWith('/') ? baseUrl : '$baseUrl/';
@@ -51,8 +54,11 @@ class RealtimeSession with WidgetsBindingObserver {
     if (!fg) {
       _pausedAt ??= DateTime.now();
       _foreground = false;
+      // Tras 45 s en background se cierran los sockets (sin frames ni parseo).
+      _closer.onBackground();
       return;
     }
+    _closer.onForeground();
     final away = _pausedAt == null
         ? Duration.zero
         : DateTime.now().difference(_pausedAt!);
@@ -65,9 +71,26 @@ class RealtimeSession with WidgetsBindingObserver {
     }
   }
 
+  void _suspend() {
+    if (_disposed || _foreground) return;
+    _log('background: cerrando sockets');
+    for (final c in _channels) {
+      c.suspend();
+    }
+  }
+
+  void _reportConnected() {
+    if (_disposed) return;
+    final h = _channels.every((c) => c.connected);
+    if (h == _healthy) return;
+    _healthy = h;
+    onConnectedChanged(h);
+  }
+
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _closer.dispose();
     WidgetsBinding.instance.removeObserver(this);
     for (final c in _channels) {
       c.close();
@@ -98,6 +121,8 @@ class _Channel {
   bool _connecting = false;
   bool _closed = false;
 
+  bool get connected => _ws != null;
+
   String get _name => primary ? 'chat-list' : 'clients';
 
   Future<void> connect() async {
@@ -127,7 +152,7 @@ class _Channel {
     _ws = ws;
     _attempts = 0;
     _s._log('$_name: conectado');
-    if (primary) _s.onConnectedChanged(true);
+    _s._reportConnected();
     _s.onEvent(const RealtimeResync());
     _sub = ws.listen(
       (data) {
@@ -146,7 +171,7 @@ class _Channel {
     _s._log('$_name: caído');
     _ws = null;
     _sub = null;
-    if (primary && !_closed) _s.onConnectedChanged(false);
+    if (!_closed) _s._reportConnected();
     _scheduleRetry();
   }
 
@@ -182,8 +207,19 @@ class _Channel {
     _sub = null;
     if (ws != null) {
       unawaited(ws.close());
-      if (primary && !_closed) _s.onConnectedChanged(false);
+      if (!_closed) _s._reportConnected();
     }
+  }
+
+  /// Cierre por inactividad en background: sin reintentos; reconecta con
+  /// [reconnectNow] al volver.
+  void suspend() {
+    if (_closed) return;
+    _retry?.cancel();
+    _attempts = 0;
+    _gen++;
+    _connecting = false;
+    _detach();
   }
 
   void close() {

@@ -163,7 +163,7 @@ class ChatListController extends _$ChatListController {
     final gate = _gate = ReloadGate(signalGap: const Duration(seconds: 1));
     _signalPending = false;
     // Al cambiar la sesión se descarta todo y se vuelve a cargar.
-    ref.watch(authStateProvider);
+    ref.watch(sessionActiveProvider);
     // Tiempo real: Resync -> auto (cooldown); cualquier otro evento trae datos
     // nuevos -> signal (coalesce, nunca se pierde; sustituye al throttle de
     // 1 s porque la señal ya agrupa por vuelo y cooldown).
@@ -333,9 +333,7 @@ class ChatListController extends _$ChatListController {
   Future<void> autoPoll() async {
     if (state.status != ListStatus.data || state.loadingMore) return;
     if (state.isGlobalSearch) return;
-    await _gate.auto(
-      () => _doLoadFirst(skeleton: false, merge: true),
-    );
+    await _gate.auto(() => _doLoadFirst(skeleton: false, merge: true));
   }
 
   /// Señal de datos nuevos (evento realtime): nunca se pierde, se coalesce.

@@ -24,8 +24,7 @@ class Realtime extends _$Realtime {
 
   @override
   bool build() {
-    final auth = ref.watch(authStateProvider);
-    if (auth.isLoading || auth.value != true) return false;
+    if (!ref.watch(sessionActiveProvider)) return false;
     if (wsBaseUrl.isEmpty || wsOrigin.isEmpty) return false;
     final me = ref.watch(currentUserProvider).value;
     // El servidor solo acepta ids en minúscula (hex y guiones).

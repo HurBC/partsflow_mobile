@@ -6,7 +6,7 @@ import 'package:partsflow_mobile/core/realtime/realtime_event.dart';
 class ResyncCoalescer {
   ResyncCoalescer({
     required this.sink,
-    this.window = const Duration(seconds: 2),
+    this.window = const Duration(seconds: 5),
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
 

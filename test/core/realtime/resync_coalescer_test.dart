@@ -20,9 +20,9 @@ void main() {
     expect(out.whereType<RealtimeResync>(), hasLength(1));
   });
 
-  test('2 Resync separados por 5 s -> 2', () {
+  test('2 Resync separados por 6 s -> 2', () {
     c.add(const RealtimeResync());
-    t = t.add(const Duration(seconds: 5));
+    t = t.add(const Duration(seconds: 6));
     c.add(const RealtimeResync());
     expect(out.whereType<RealtimeResync>(), hasLength(2));
   });

@@ -28,8 +28,7 @@ class ReloadGate {
   /// Llamar cuando una carga termina con éxito.
   void markSuccess() => _lastOk = _now();
 
-  bool get _fresh =>
-      _lastOk != null && _now().difference(_lastOk!) < cooldown;
+  bool get _fresh => _lastOk != null && _now().difference(_lastOk!) < cooldown;
 
   bool get _signalFresh =>
       _lastOk != null && _now().difference(_lastOk!) < signalGap;

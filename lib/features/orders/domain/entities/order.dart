@@ -136,6 +136,25 @@ class OrderSummary {
     );
   }
 
+  OrderSummary withStatus(String? newStatus) => OrderSummary(
+    id: id,
+    status: newStatus,
+    source: source,
+    createdAt: createdAt,
+    ticket: ticket,
+    responsibleName: responsibleName,
+    clientId: clientId,
+    clientName: clientName,
+    clientPhone: clientPhone,
+    clientEmail: clientEmail,
+    clientPhotoUrl: clientPhotoUrl,
+    clientLastMessageAt: clientLastMessageAt,
+    carName: carName,
+    plate: plate,
+    products: products,
+    cancelReason: cancelReason,
+  );
+
   OrderSummary copyWith({List<OrderProduct>? products}) => OrderSummary(
     id: id,
     status: status,
