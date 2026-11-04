@@ -276,4 +276,138 @@ void main() {
       expect(r!.map((m) => m.id), ['a', 'c', 'd']);
     });
   });
+
+  group('applyMessageUpdates', () {
+    test('reemplaza contenido conservando el id existente', () {
+      final cur = [
+        Message(
+          id: 'local-1',
+          messageId: 'w1',
+          date: DateTime.utc(2025),
+          type: 'image',
+          mediaPending: true,
+        ),
+      ];
+      final next = applyMessageUpdates(cur, [
+        Message(
+          id: 'srv-1',
+          messageId: 'w1',
+          date: DateTime.utc(2025),
+          type: 'image',
+          mediaUrl: 'http://x/y.jpg',
+        ),
+      ])!;
+      expect(next.single.id, 'local-1');
+      expect(next.single.mediaUrl, 'http://x/y.jpg');
+      expect(next.single.mediaPending, isFalse);
+    });
+
+    test('no retrocede el status', () {
+      final cur = [mm('a', at(0), messageId: 'w1', status: 'read')];
+      final next = applyMessageUpdates(cur, [
+        Message(
+          id: 'a',
+          messageId: 'w1',
+          date: at(0),
+          status: 'sent',
+          mediaUrl: 'u',
+        ),
+      ])!;
+      expect(next.single.status, 'read');
+      expect(next.single.mediaUrl, 'u');
+    });
+
+    test('inserta ordenado si no existe', () {
+      final cur = [
+        mm('a', at(0), messageId: 'w1'),
+        mm('c', at(10), messageId: 'w3'),
+      ];
+      final next = applyMessageUpdates(cur, [mm('b', at(5), messageId: 'w2')])!;
+      expect(next.map((m) => m.messageId), ['w1', 'w2', 'w3']);
+    });
+
+    test('null si no cambia nada o no hay entrantes', () {
+      final cur = [mm('a', at(0), messageId: 'w1', status: 'sent')];
+      expect(
+        applyMessageUpdates(cur, [
+          mm('a', at(0), messageId: 'w1', status: 'sent'),
+        ]),
+        isNull,
+      );
+      expect(applyMessageUpdates(cur, const []), isNull);
+    });
+  });
+
+  test('messageFromJson mapea media.pending', () {
+    final p = messageFromJson({
+      'message_id': 'w1',
+      'type': 'image',
+      'date': '2026-01-02T10:00:00Z',
+      'media': {'id': 'm', 'mime': 'image/jpeg', 'pending': true},
+    })!;
+    expect(p.mediaPending, isTrue);
+    expect(p.mediaUrl, isNull);
+    final r = messageFromJson({
+      'message_id': 'w1',
+      'type': 'image',
+      'date': '2026-01-02T10:00:00Z',
+      'media': {'id': 'm', 'url': 'http://x', 'pending': false},
+    })!;
+    expect(r.mediaPending, isFalse);
+    expect(r.mediaUrl, 'http://x');
+  });
+
+  group('carrera de media pendiente', () {
+    Message img({
+      String? url,
+      bool pending = false,
+      String? localPath,
+      double? progress,
+    }) => Message(
+      id: 'a',
+      messageId: 'w1',
+      date: DateTime.utc(2025),
+      type: 'image',
+      mediaUrl: url,
+      mediaFilename: url == null ? null : 'f.jpg',
+      mediaPending: pending,
+      localPath: localPath,
+      uploadProgress: progress,
+    );
+
+    test('mergeMessages: respuesta vieja pending no pisa media resuelta', () {
+      final r = mergeMessages(
+        [img(url: 'http://x/f.jpg')],
+        [img(pending: true)],
+      ).single;
+      expect(r.mediaUrl, 'http://x/f.jpg');
+      expect(r.mediaFilename, 'f.jpg');
+      expect(r.mediaPending, isFalse);
+    });
+    test('mergeMessages: pending sobre pending se mantiene', () {
+      final r = mergeMessages(
+        [img(pending: true)],
+        [img(pending: true)],
+      ).single;
+      expect(r.mediaPending, isTrue);
+    });
+    test('mergeMessages: resuelta sobre pending aplica', () {
+      final r = mergeMessages([img(pending: true)], [img(url: 'u')]).single;
+      expect(r.mediaUrl, 'u');
+      expect(r.mediaPending, isFalse);
+    });
+    test('applyMessageUpdates: update viejo pending no pisa resuelta', () {
+      final r = applyMessageUpdates([img(url: 'u')], [img(pending: true)]);
+      expect(r, isNull);
+    });
+    test('applyMessageUpdates conserva localPath y progreso locales', () {
+      final r = applyMessageUpdates(
+        [img(pending: true, localPath: '/tmp/a.jpg', progress: 0.5)],
+        [img(url: 'u')],
+      )!.single;
+      expect(r.mediaUrl, 'u');
+      expect(r.localPath, '/tmp/a.jpg');
+      expect(r.uploadProgress, 0.5);
+    });
+  });
 }

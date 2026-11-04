@@ -14,6 +14,13 @@ class RealtimeNewMessages extends RealtimeEvent {
   final List<Map<String, dynamic>> items;
 }
 
+/// Mensajes ya publicados que cambiaron (p. ej. media pendiente lista):
+/// cada ítem es el documento completo actualizado.
+class RealtimeMessageUpdates extends RealtimeEvent {
+  const RealtimeMessageUpdates(this.items);
+  final List<Map<String, dynamic>> items;
+}
+
 /// Cambios de estado (ticks) de mensajes.
 class RealtimeStatusUpdates extends RealtimeEvent {
   const RealtimeStatusUpdates(this.items);
@@ -43,6 +50,8 @@ RealtimeEvent? parseRealtimeFrame(Object? raw) {
     switch (type) {
       case 'chat_list_new_message':
         return RealtimeNewMessages(_items(m['new_messages_data']));
+      case 'chat_list_message_update':
+        return RealtimeMessageUpdates(_items(m['message_update_data']));
       case 'chat_list_message_status_update':
         return RealtimeStatusUpdates(_items(m['message_status_update_data']));
       case 'client_updated':

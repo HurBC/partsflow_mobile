@@ -18,6 +18,39 @@ bool _regresses(String? from, String to) {
   return f != null && t != null && t < f;
 }
 
+/// Reconcilia [incoming] con [old] ya conocido: no retrocede el estado de
+/// entrega, no pierde la media ya resuelta ante una respuesta vieja con
+/// `mediaPending` (recarga lanzada durante la ventana de pendiente) y conserva
+/// campos solo locales (`localPath`, progreso de subida) si el entrante no los
+/// trae.
+Message _reconcile(Message old, Message incoming) {
+  var next = incoming;
+  final st = incoming.status;
+  if (st != null && _regresses(old.status, st)) {
+    next = next.copyWith(status: old.status);
+  }
+  if (old.mediaUrl != null &&
+      !old.mediaPending &&
+      incoming.mediaPending &&
+      incoming.mediaUrl == null) {
+    next = next.copyWith(
+      mediaUrl: old.mediaUrl,
+      mediaFilename: old.mediaFilename ?? incoming.mediaFilename,
+      mediaId: old.mediaId ?? incoming.mediaId,
+      mediaMime: old.mediaMime ?? incoming.mediaMime,
+      mediaPending: false,
+    );
+  }
+  if ((next.localPath == null && old.localPath != null) ||
+      (next.uploadProgress == null && old.uploadProgress != null)) {
+    next = next.copyWith(
+      localPath: next.localPath ?? old.localPath,
+      uploadProgress: next.uploadProgress ?? old.uploadProgress,
+    );
+  }
+  return next;
+}
+
 /// Une dos listas de mensajes por id (los de [b] pisan a los de [a]) y ordena
 /// por fecha ascendente. Un mensaje de [b] con el mismo `messageId` que uno de
 /// [a] (p. ej. el parche realtime y el historial con id real) reemplaza a ese,
@@ -40,10 +73,7 @@ List<Message> mergeMessages(List<Message> a, List<Message> b) {
         old.messageId != mid) {
       old = null;
     }
-    var next = m;
-    if (old != null && m.status != null && _regresses(old.status, m.status!)) {
-      next = m.copyWith(status: old.status);
-    }
+    var next = old == null ? m : _reconcile(old, m);
     // Mismo mensaje (por message_id) con otro id (p. ej. parcheado desde el
     // evento y luego traído por el historial): conservar el id existente para
     // que keys y animaciones de entrada del hilo no se recreen.
@@ -152,6 +182,56 @@ List<Message>? applyNewMessages(List<Message> current, List<Message> incoming) {
       }
     } else {
       index(m, pos);
+    }
+  }
+  return changed ? out : null;
+}
+
+/// Aplica documentos completos actualizados (evento `chat_list_message_update`,
+/// p. ej. media pendiente ya lista) como upsert por `messageId`, luego `id`,
+/// luego `websocketId`. Si existe se reemplaza su contenido conservando el
+/// `id` (keys/animaciones) y sin retroceder el estado de entrega; si no existe
+/// (el update llegó antes que el mensaje nuevo) se inserta por fecha.
+/// Devuelve null si nada cambió.
+List<Message>? applyMessageUpdates(
+  List<Message> current,
+  List<Message> incoming,
+) {
+  if (incoming.isEmpty) return null;
+  final out = [...current];
+  var changed = false;
+  for (final m in incoming) {
+    var at = -1;
+    if (m.messageId != null) {
+      at = out.indexWhere((e) => e.messageId == m.messageId);
+    }
+    if (at < 0) {
+      bool compatible(Message e) =>
+          m.messageId == null ||
+          e.messageId == null ||
+          e.messageId == m.messageId;
+      at = out.indexWhere(
+        (e) =>
+            compatible(e) &&
+            (e.id == m.id ||
+                (m.websocketId != null && e.websocketId == m.websocketId)),
+      );
+    }
+    if (at < 0) {
+      var pos = out.length;
+      while (pos > 0 && out[pos - 1].date.isAfter(m.date)) {
+        pos--;
+      }
+      out.insert(pos, m);
+      changed = true;
+      continue;
+    }
+    final old = out[at];
+    var next = _reconcile(old, m);
+    if (next.id != old.id) next = next.copyWith(id: old.id);
+    if (next != old) {
+      out[at] = next;
+      changed = true;
     }
   }
   return changed ? out : null;
