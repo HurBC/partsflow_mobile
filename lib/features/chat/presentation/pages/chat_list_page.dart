@@ -130,11 +130,20 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
     final counts = ref.read(actionRequiredProvider).counts;
     if (card == ActionCard.importantClients) {
       _debounce?.cancel();
-      _searchController.text = counts.importantClients.join(',');
+      final phones = counts.importantClients;
+      final shown = phones.length > maxSearchPhones
+          ? phones.sublist(0, maxSearchPhones)
+          : phones;
+      _searchController.text = shown.join(',');
       if (_scroll.hasClients) _scroll.jumpTo(0);
-      ref
-          .read(chatListControllerProvider.notifier)
-          .searchPhones(counts.importantClients);
+      ref.read(chatListControllerProvider.notifier).searchPhones(shown);
+      if (shown.length < phones.length) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(content: Text('Mostrando los primeros $maxSearchPhones')),
+          );
+      }
       setState(() {});
       return;
     }
@@ -568,6 +577,14 @@ class _Header extends StatelessWidget {
               ),
             ),
           ),
+          if (isInvalidOrderIdSearch(searchMode, searchController.text))
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+              child: Text(
+                orderIdSearchHint,
+                style: TextStyle(fontSize: 12, color: pf.text2),
+              ),
+            ),
           const SizedBox(height: 6),
           SizedBox(
             height: 48,

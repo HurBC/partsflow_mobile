@@ -90,11 +90,30 @@ class _RemindersSheetState extends ConsumerState<_RemindersSheet> {
     'Recordatorio resuelto',
   );
 
-  Future<void> _extend(Reminder r, DateTime until) => _run(
-    r,
-    () => ref.read(remindersControllerProvider(_key).notifier).extend(r, until),
-    'Recordatorio extendido',
-  );
+  Future<void> _extend(Reminder r, DateTime until) async {
+    if (_busyId != null) return;
+    setState(() => _busyId = r.id);
+    final o = await ref
+        .read(remindersControllerProvider(_key).notifier)
+        .extend(r, until);
+    if (!mounted) return;
+    setState(() => _busyId = null);
+    if (o == null) {
+      _snack('No se pudo completar la acción. Intenta de nuevo.', error: true);
+    } else if (o.partial) {
+      _snack(
+        'Se creó el nuevo recordatorio; el anterior no se pudo cerrar',
+        error: true,
+      );
+    } else if (o.reloadFailed) {
+      _snack(
+        'Recordatorio extendido, pero no pudimos actualizar la lista',
+        error: true,
+      );
+    } else {
+      _snack('Recordatorio extendido');
+    }
+  }
 
   Future<void> _extendCustom(Reminder r) async {
     final now = ref.read(reminderClockProvider)();
@@ -161,7 +180,11 @@ class _RemindersSheetState extends ConsumerState<_RemindersSheet> {
   Future<void> _create() async {
     await showClientReminderSheet(context, widget.chat);
     if (!mounted) return;
-    ref.invalidate(remindersControllerProvider(_key));
+    final ok = await ref
+        .read(remindersControllerProvider(_key).notifier)
+        .reload();
+    if (!mounted || ok) return;
+    _snack('No pudimos actualizar la lista', error: true);
   }
 
   @override

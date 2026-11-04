@@ -7,13 +7,22 @@ import 'package:partsflow_mobile/features/chat/presentation/providers/chat_provi
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_actions_sheet.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// Resultado de una acción sobre un chat. [chat] es el chat ya actualizado
-/// (solo si [ok]); el llamador decide dónde reflejarlo (hilo, lista).
+/// Resultado de una acción sobre un chat. [change] es la transformación a
+/// aplicar (solo si [ok]) sobre el chat VIGENTE al terminar el request, para
+/// no pisar cambios realtime llegados mientras tanto; el llamador decide dónde
+/// aplicarla (hilo, lista). [chat] es solo la vista previa sobre el chat
+/// capturado al inicio (no usar para escribir estado).
 class ChatActionOutcome {
-  const ChatActionOutcome({required this.ok, required this.message, this.chat});
+  const ChatActionOutcome({
+    required this.ok,
+    required this.message,
+    this.change,
+    this.chat,
+  });
 
   final bool ok;
   final String message;
+  final Chat Function(Chat)? change;
   final Chat? chat;
 }
 
@@ -62,6 +71,7 @@ class ChatActionsService {
       Ok() => ChatActionOutcome(
         ok: true,
         message: okMessage,
+        change: (c) => apply(c, me),
         chat: apply(chat, me),
       ),
       Err(:final failure) => ChatActionOutcome(
@@ -131,6 +141,7 @@ class ChatActionsService {
       return ChatActionOutcome(
         ok: true,
         message: 'Chat marcado como no leído',
+        change: (c) => c.copyWith(isUnread: true),
         chat: chat.copyWith(isUnread: true),
       );
     }

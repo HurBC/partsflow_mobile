@@ -825,8 +825,9 @@ class ChatThread extends _$ChatThread {
   /// Refleja el resultado de una acción del servicio en el hilo y la lista.
   ActionResult _applyOutcome(ChatActionOutcome o) {
     if (!ref.mounted) return (ok: false, message: '');
-    if (o.ok && o.chat != null) {
-      _setChat(o.chat!);
+    final change = o.change;
+    if (o.ok && change != null) {
+      _setChat(change(state.chat));
       ref.read(chatListControllerProvider.notifier).poll();
     }
     return (ok: o.ok, message: o.message);

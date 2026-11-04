@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:partsflow_mobile/core/errors/failure.dart';
+import 'package:partsflow_mobile/core/providers/auth_state_provider.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/action_required_counts.dart';
 import 'package:partsflow_mobile/features/chat/domain/repositories/chat_repository.dart';
@@ -26,6 +29,28 @@ class _Repo implements ChatRepository {
   @override
   dynamic noSuchMethod(Invocation i) => throw UnimplementedError();
 }
+
+class _SlowRepo implements ChatRepository {
+  final pending = <Completer<Result<ActionRequiredCounts>>>[];
+
+  @override
+  Future<Result<ActionRequiredCounts>> actionRequiredCounts() {
+    final c = Completer<Result<ActionRequiredCounts>>();
+    pending.add(c);
+    return c.future;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation i) => throw UnimplementedError();
+}
+
+class _Session extends Notifier<bool> {
+  @override
+  bool build() => true;
+  void set(bool v) => state = v;
+}
+
+final _sessionFlag = NotifierProvider<_Session, bool>(_Session.new);
 
 void main() {
   late _Repo repo;
@@ -94,5 +119,40 @@ void main() {
     expect(actionCardCountLabel(ActionCard.toQuote, 51), '+50');
     expect(actionCardCountLabel(ActionCard.optionsAccepted, 50), '50');
     expect(actionCardCountLabel(ActionCard.importantClients, 80), '80');
+  });
+
+  test('cambio de sesión con request lento en vuelo: la nueva carga y el viejo '
+      'resultado se descarta', () async {
+    final slow = _SlowRepo();
+    final c3 = ProviderContainer(
+      overrides: [
+        chatRepositoryProvider.overrideWithValue(slow),
+        sessionActiveProvider.overrideWith((ref) => ref.watch(_sessionFlag)),
+      ],
+    );
+    addTearDown(c3.dispose);
+    c3.listen(actionRequiredProvider, (_, _) {});
+    await settle();
+    expect(slow.pending, hasLength(1)); // sesión vieja, sin responder
+
+    // Cambia la sesión: el notifier se reconstruye y pide de nuevo aunque
+    // el request anterior siga en vuelo.
+    c3.read(_sessionFlag.notifier).set(false);
+    await settle();
+    await settle();
+    expect(slow.pending, hasLength(2));
+
+    slow.pending[1].complete(
+      Result.ok(const ActionRequiredCounts(toQuoteOrders: [9])),
+    );
+    await settle();
+    expect(c3.read(actionRequiredProvider).counts.toQuoteOrders, [9]);
+
+    // El resultado de la sesión vieja llega tarde: se descarta.
+    slow.pending[0].complete(
+      Result.ok(const ActionRequiredCounts(toQuoteOrders: [1, 2, 3])),
+    );
+    await settle();
+    expect(c3.read(actionRequiredProvider).counts.toQuoteOrders, [9]);
   });
 }

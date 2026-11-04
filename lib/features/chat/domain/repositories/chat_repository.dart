@@ -13,6 +13,15 @@ import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachme
 import 'package:partsflow_mobile/features/chat/domain/entities/quick_answer.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/send_outcome.dart';
 
+/// Resultado de [ChatRepository.extendReminder].
+enum ReminderExtendResult {
+  /// Se creó el nuevo y se resolvió el original.
+  done,
+
+  /// Se creó el nuevo pero el original no se pudo resolver.
+  createdOnly,
+}
+
 abstract class ChatRepository {
   /// [cancel] aborta el request en vuelo (la respuesta pasa a ser un error
   /// que el llamador debe descartar si `cancel.isCancelled`).
@@ -121,9 +130,15 @@ abstract class ChatRepository {
   /// Reprograma [reminder] para dentro de [minutes]. SAPI solo extiende +5 min
   /// (`extend-reminder` ignora el body), así que se crea uno nuevo con el mismo
   /// texto y se resuelve el original.
-  Future<Result<bool>> extendReminder({
+  ///
+  /// [chatId] es el respaldo si el recordatorio no trae chat. Un fallo plano
+  /// significa que no se creó nada (reintentar es seguro); si se creó el nuevo
+  /// pero no se pudo resolver el original, éxito parcial
+  /// ([ReminderExtendResult.createdOnly]): reintentar duplicaría.
+  Future<Result<ReminderExtendResult>> extendReminder({
     required Reminder reminder,
     required String userId,
     required int minutes,
+    String? chatId,
   });
 }

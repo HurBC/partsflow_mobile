@@ -46,10 +46,11 @@ Future<void> showChatRowActions(
   }
   final o = await ref.read(chatActionsServiceProvider).perform(action, chat);
   if (o == null) return;
-  if (o.ok && o.chat != null) {
+  final change = o.change;
+  if (o.ok && change != null) {
     await ref
         .read(chatListControllerProvider.notifier)
-        .applyLocalChange(o.chat!);
+        .applyLocalChange(chat.id, change);
   }
   _snack(messenger, o.message);
 }

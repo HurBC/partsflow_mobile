@@ -49,12 +49,15 @@ class ActionRequiredController extends Notifier<ActionRequiredState> {
 
   DateTime? _last;
   bool _loading = false;
+  int _gen = 0;
 
   @override
   ActionRequiredState build() {
     // Al cambiar la sesión se descarta todo (incluidos los descartes).
     ref.watch(sessionActiveProvider);
     _last = null;
+    _loading = false;
+    _gen++;
     Future.microtask(() {
       if (ref.mounted) refresh(force: true);
     });
@@ -68,9 +71,11 @@ class ActionRequiredController extends Notifier<ActionRequiredState> {
       return;
     }
     _loading = true;
+    final gen = _gen;
     try {
       final r = await ref.read(chatRepositoryProvider).actionRequiredCounts();
-      if (!ref.mounted) return;
+      // Sesión distinta a la que pidió: el resultado no le corresponde.
+      if (!ref.mounted || gen != _gen) return;
       // Error: se conservan los últimos valores (el resumen es accesorio).
       if (r case Ok(:final value)) {
         _last = DateTime.now();
@@ -82,7 +87,7 @@ class ActionRequiredController extends Notifier<ActionRequiredState> {
         }
       }
     } finally {
-      _loading = false;
+      if (gen == _gen) _loading = false;
     }
   }
 

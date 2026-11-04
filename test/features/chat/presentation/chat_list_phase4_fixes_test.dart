@@ -101,8 +101,12 @@ void main() {
     var t = DateTime(2024, 1, 1, 10);
     chatNow = () => t;
     addTearDown(() => chatNow = DateTime.now);
+    // Repo falso (antes usaba el real: red/Dio/timers reales fuera del control
+    // del test) y reloj inyectado vía chatNow, restaurado en el teardown.
+    final repo = _Repo()..auto = true;
     final c = ProviderContainer(
       overrides: [
+        chatRepositoryProvider.overrideWithValue(repo),
         chatListControllerProvider.overrideWith(_Ctl.new),
         realtimeProvider.overrideWith(_FakeRealtime.new),
       ],

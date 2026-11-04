@@ -32,7 +32,9 @@ enum SearchMode {
 /// Valor del param `search` de `chat/search/` (mismo formato que el BO:
 /// `<prefijo>,<texto>`). Vacío si no hay texto. En `order_id:` el servidor
 /// espera enteros (`orders__id__in`): se conservan solo los números (admite
-/// `#123`, `123 456`, `123,456`); si no hay ninguno se envía el texto tal cual.
+/// `#123`, `123 456`, `123,456`); si no hay ninguno devuelve null (sin
+/// búsqueda: enviarlo daría error en el servidor; la UI avisa con
+/// [orderIdSearchHint]).
 String? chatSearchParam(SearchMode mode, String text) {
   final t = text.trim();
   if (t.isEmpty) return null;
@@ -40,10 +42,19 @@ String? chatSearchParam(SearchMode mode, String text) {
   if (prefix == null) return t;
   if (mode == SearchMode.orderId) {
     final ids = RegExp(r'\d+').allMatches(t).map((m) => m.group(0)!).toList();
-    if (ids.isNotEmpty) return '$prefix,${ids.join(',')}';
+    return ids.isEmpty ? null : '$prefix,${ids.join(',')}';
   }
   return '$prefix,$t';
 }
+
+/// Aviso cuando se busca por pedido con texto sin números.
+const orderIdSearchHint = 'Ingresa un número de pedido';
+
+/// True si [text] en [mode] no genera búsqueda por no ser válido.
+bool isInvalidOrderIdSearch(SearchMode mode, String text) =>
+    mode == SearchMode.orderId &&
+    text.trim().isNotEmpty &&
+    chatSearchParam(mode, text) == null;
 
 /// Subfiltros locales (hoja "Filtrar chats").
 class ChatFilters {

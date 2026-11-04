@@ -30,7 +30,10 @@ void main() {
         chatSearchParam(SearchMode.orderId, '12, 34 56'),
         'order_id:,12,34,56',
       );
-      expect(chatSearchParam(SearchMode.orderId, 'abc'), 'order_id:,abc');
+      expect(chatSearchParam(SearchMode.orderId, 'abc'), isNull);
+      expect(isInvalidOrderIdSearch(SearchMode.orderId, 'abc'), isTrue);
+      expect(isInvalidOrderIdSearch(SearchMode.orderId, '12'), isFalse);
+      expect(isInvalidOrderIdSearch(SearchMode.client, 'abc'), isFalse);
     });
   });
 }

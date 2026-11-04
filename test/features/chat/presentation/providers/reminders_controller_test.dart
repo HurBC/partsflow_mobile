@@ -26,6 +26,8 @@ class _Repo implements ChatRepository {
 
   List<Reminder> items;
   bool fail = false;
+  bool partial = false;
+  bool failList = false;
   final calls = <String>[];
 
   @override
@@ -44,6 +46,7 @@ class _Repo implements ChatRepository {
   @override
   Future<Result<List<Reminder>>> pendingReminders(String chatId) async {
     calls.add('list:$chatId');
+    if (failList) return Result.err(Failure.network());
     return Result.ok(List.of(items));
   }
 
@@ -59,14 +62,16 @@ class _Repo implements ChatRepository {
   }
 
   @override
-  Future<Result<bool>> extendReminder({
+  Future<Result<ReminderExtendResult>> extendReminder({
     required Reminder reminder,
     required String userId,
     required int minutes,
+    String? chatId,
   }) async {
     calls.add('extend:${reminder.id}:$userId:$minutes');
     if (fail) return Result.err(Failure.network());
-    return Result.ok(true);
+    if (partial) return Result.ok(ReminderExtendResult.createdOnly);
+    return Result.ok(ReminderExtendResult.done);
   }
 
   @override
@@ -159,31 +164,67 @@ void main() {
     repo.fail = true;
     final n = c.read(remindersControllerProvider(key).notifier);
     expect(await n.resolve(rem('1')), isFalse);
-    expect(
-      await n.extend(rem('1'), now.add(const Duration(hours: 1))),
-      isFalse,
-    );
+    expect(await n.extend(rem('1'), now.add(const Duration(hours: 1))), isNull);
     expect(c.read(remindersControllerProvider(key)).value, [rem('1')]);
   });
 
   test('extend sends minutes until target; past target is rejected', () async {
     await boot([rem('1'), rem('2', responsible: null)]);
     final n = c.read(remindersControllerProvider(key).notifier);
-    expect(await n.extend(rem('1'), now.add(const Duration(hours: 3))), isTrue);
+    expect(
+      await n.extend(rem('1'), now.add(const Duration(hours: 3))),
+      isNotNull,
+    );
     expect(repo.calls, contains('extend:1:5:180'));
     expect(
       await n.extend(
         rem('2', responsible: null),
         now.add(const Duration(minutes: 30)),
       ),
-      isTrue,
+      isNotNull,
     );
     expect(repo.calls, contains('extend:2:99:30'));
     final before = repo.calls.length;
     expect(
       await n.extend(rem('1'), now.subtract(const Duration(minutes: 1))),
-      isFalse,
+      isNull,
     );
     expect(repo.calls.length, before);
+  });
+
+  test('partial success (created, original not closed) is reported', () async {
+    await boot([rem('1')]);
+    repo.partial = true;
+    final o = await c
+        .read(remindersControllerProvider(key).notifier)
+        .extend(rem('1'), now.add(const Duration(hours: 1)));
+    expect(o, isNotNull);
+    expect(o!.partial, isTrue);
+    expect(o.reloadFailed, isFalse);
+    // Se recargó la lista (el nuevo recordatorio aparece).
+    expect(repo.calls.where((x) => x.startsWith('list:')).length, 2);
+  });
+
+  test('failed reload after extend keeps the previous list', () async {
+    await boot([rem('1'), rem('2')]);
+    repo.failList = true;
+    final o = await c
+        .read(remindersControllerProvider(key).notifier)
+        .extend(rem('1'), now.add(const Duration(hours: 1)));
+    expect(o!.reloadFailed, isTrue);
+    final st = c.read(remindersControllerProvider(key));
+    expect(st.hasError, isFalse);
+    expect(st.value!.map((r) => r.id).toSet(), {'1', '2'});
+  });
+
+  test('empty reload reconciles hasPendingReminder on the chat', () async {
+    await boot([rem('1')]);
+    c
+        .read(chatThreadProvider(key).notifier)
+        .applyClientExtras(hasPendingReminder: true);
+    repo.items = [];
+    final ok = await c.read(remindersControllerProvider(key).notifier).reload();
+    expect(ok, isTrue);
+    expect(c.read(chatThreadProvider(key)).chat.hasPendingReminder, isFalse);
   });
 }

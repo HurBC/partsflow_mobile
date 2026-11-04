@@ -566,19 +566,30 @@ class ChatRepositoryImpl implements ChatRepository {
   });
 
   @override
-  Future<Result<bool>> extendReminder({
+  Future<Result<ReminderExtendResult>> extendReminder({
     required Reminder reminder,
     required String userId,
     required int minutes,
-  }) => _guard(() async {
-    await _remote.createReminder({
-      'reminder_type': 'minutes',
-      'chat_id': reminder.chatId,
-      'responsible': userId,
-      'reminder_time': minutes,
-      'comment': reminder.comment ?? '',
-    });
-    await _remote.resolveReminder(reminder.id);
-    return true;
-  });
+    String? chatId,
+  }) async {
+    final chat = reminder.chatId.isNotEmpty ? reminder.chatId : (chatId ?? '');
+    try {
+      await _remote.createReminder({
+        'reminder_type': 'minutes',
+        'chat_id': chat,
+        'responsible': userId,
+        'reminder_time': minutes,
+        'comment': reminder.comment ?? '',
+      });
+    } catch (e) {
+      return Result.err(_fail(e));
+    }
+    try {
+      await _remote.resolveReminder(reminder.id);
+    } catch (e) {
+      pfLog('extendReminder: resolve failed ${e.runtimeType}');
+      return Result.ok(ReminderExtendResult.createdOnly);
+    }
+    return Result.ok(ReminderExtendResult.done);
+  }
 }
