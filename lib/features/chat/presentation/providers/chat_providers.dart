@@ -610,4 +610,23 @@ class ChatListController extends _$ChatListController {
       items: [for (final c in state.items) c.id == chat.id ? chat : c],
     );
   }
+
+  /// Refleja en la lista una acción hecha desde una fila (o la hoja de
+  /// acciones): reemplaza el chat; si dejó de pertenecer a la pestaña activa
+  /// lo quita, y pide una recarga coalescida para alinear con el servidor.
+  Future<void> applyLocalChange(Chat chat) async {
+    final s = state;
+    final userId = s.tab == ChatTab.assigned
+        ? (await ref.read(apiUserProvider.future))?.id
+        : null;
+    if (!ref.mounted) return;
+    final leaves = chatLeavesTab(s.tab, chat, userId: userId);
+    state = state.copyWith(
+      items: [
+        for (final c in state.items)
+          if (c.id != chat.id) c else if (!leaves) chat,
+      ],
+    );
+    poll();
+  }
 }

@@ -5,10 +5,9 @@ import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
-import 'package:partsflow_mobile/features/chat/domain/entities/chat_key.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_extras.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
-import 'package:partsflow_mobile/features/chat/presentation/providers/chat_thread_controller.dart';
+import 'package:partsflow_mobile/features/chat/presentation/providers/client_extras_sync.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_common.dart';
 
@@ -455,9 +454,7 @@ class _TagsSheetState extends ConsumerState<_TagsSheet> {
       for (final t in all)
         if (_assigned.contains(t.id)) ChatTag(name: t.name, color: t.color),
     ];
-    ref
-        .read(chatThreadProvider(ChatKey(widget.chat)).notifier)
-        .applyClientExtras(tags: tags);
+    applyClientExtras(ref, widget.chat, tags: tags);
   }
 
   Future<void> _toggle(ClientTag t) async {
@@ -618,9 +615,8 @@ class _IssuesSheetState extends ConsumerState<_IssuesSheet> {
     }
   }
 
-  void _publish() => ref
-      .read(chatThreadProvider(ChatKey(widget.chat)).notifier)
-      .applyClientExtras(issuesCount: _issues?.length);
+  void _publish() =>
+      applyClientExtras(ref, widget.chat, issuesCount: _issues?.length);
 
   Future<void> _create() async {
     final id = _clientId;
@@ -872,9 +868,7 @@ class _ReminderSheetState extends ConsumerState<_ReminderSheet> {
     setState(() => _saving = false);
     switch (r) {
       case Ok():
-        ref
-            .read(chatThreadProvider(ChatKey(widget.chat)).notifier)
-            .applyClientExtras(hasPendingReminder: true);
+        applyClientExtras(ref, widget.chat, hasPendingReminder: true);
         final root = ScaffoldMessenger.of(context);
         Navigator.pop(context);
         root

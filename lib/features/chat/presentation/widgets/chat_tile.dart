@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.dart';
@@ -10,10 +11,18 @@ import 'package:partsflow_mobile/features/chat/presentation/widgets/message_tick
 void Function(String chatId)? chatTileBuildProbe;
 
 class ChatTile extends StatelessWidget {
-  const ChatTile({super.key, required this.chat, required this.onTap});
+  const ChatTile({
+    super.key,
+    required this.chat,
+    required this.onTap,
+    this.onLongPress,
+  });
 
   final Chat chat;
   final VoidCallback onTap;
+
+  /// Mantener presionado (acciones de la fila). Con háptico.
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -36,6 +45,7 @@ class ChatTile extends StatelessWidget {
 
     return Semantics(
       button: true,
+      onLongPress: onLongPress,
       label: [
         name,
         if (unread) unreadLabel,
@@ -50,6 +60,12 @@ class ChatTile extends StatelessWidget {
       child: ExcludeSemantics(
         child: InkWell(
           onTap: onTap,
+          onLongPress: onLongPress == null
+              ? null
+              : () {
+                  HapticFeedback.mediumImpact();
+                  onLongPress!();
+                },
           child: Container(
             constraints: const BoxConstraints(minHeight: 72),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),

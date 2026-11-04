@@ -17,6 +17,7 @@ import 'package:partsflow_mobile/features/chat/presentation/providers/chat_extra
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_list_view_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_search_provider.dart';
+import 'package:partsflow_mobile/features/chat/presentation/utils/chat_row_actions.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_common.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_filters_sheet.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_motion.dart';
@@ -1012,7 +1013,11 @@ class _ChatRow extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final chat = ref.watch(chatByIdProvider(id));
     if (chat == null) return const SizedBox.shrink();
-    return ChatTile(chat: chat, onTap: () => onOpen(chat));
+    return ChatTile(
+      chat: chat,
+      onTap: () => onOpen(chat),
+      onLongPress: () => showChatRowActions(context, ref, chat),
+    );
   }
 }
 

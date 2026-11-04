@@ -21,6 +21,7 @@ import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachme
 import 'package:partsflow_mobile/features/chat/domain/entities/send_outcome.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/thread_note.dart';
 import 'package:partsflow_mobile/features/chat/domain/logic/messages.dart';
+import 'package:partsflow_mobile/features/chat/presentation/providers/chat_actions_service.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
@@ -809,37 +810,26 @@ class ChatThread extends _$ChatThread {
     String okMessage, {
     bool needsUser = false,
   }) async {
-    final clientId = state.chat.client?.id;
-    if (clientId == null) {
-      return (ok: false, message: 'No se pudo completar la acción');
-    }
-    final me = await _me();
-    if (!ref.mounted) return (ok: false, message: '');
-    if (needsUser && me == null) {
-      ref.invalidate(apiUserProvider);
-      return (ok: false, message: 'No pudimos identificar tu usuario');
-    }
-    final fieldsFinal = fields.map(
-      (k, v) => MapEntry(k, v == #me ? me?.id : v),
-    );
-    final r = await ref
-        .read(chatRepositoryProvider)
-        .updateClient(clientId, fieldsFinal);
-    if (!ref.mounted) return (ok: false, message: '');
-    switch (r) {
-      case Ok():
-        _setChat(apply(state.chat, me));
-        ref.read(chatListControllerProvider.notifier).poll();
-        return (ok: true, message: okMessage);
-      case Err(:final failure):
-        final offline = failureMessage(failure).startsWith('Sin conexión');
-        return (
-          ok: false,
-          message: offline
-              ? 'Sin conexión. Revisa tu internet.'
-              : 'No se pudo completar la acción',
+    final o = await ref
+        .read(chatActionsServiceProvider)
+        .patchClient(
+          state.chat,
+          fields,
+          apply,
+          okMessage,
+          needsUser: needsUser,
         );
+    return _applyOutcome(o);
+  }
+
+  /// Refleja el resultado de una acción del servicio en el hilo y la lista.
+  ActionResult _applyOutcome(ChatActionOutcome o) {
+    if (!ref.mounted) return (ok: false, message: '');
+    if (o.ok && o.chat != null) {
+      _setChat(o.chat!);
+      ref.read(chatListControllerProvider.notifier).poll();
     }
+    return (ok: o.ok, message: o.message);
   }
 
   /// Refleja en el chat (y la lista) etiquetas/problemas/recordatorio tras
@@ -881,57 +871,28 @@ class ChatThread extends _$ChatThread {
 
   /// Igual que el BO (ChatDetailTobBar.tsx): PATCH clients/{id}/update/ con
   /// `importance_level` 'high' (importante) o 'none'.
-  Future<ActionResult> setImportant(bool important) => _patch(
-    {'importance_level': important ? 'high' : 'none'},
-    (c, _) => c.copyWith(client: c.client!.copyWith(isImportant: important)),
-    important
-        ? 'Cliente marcado como importante'
-        : 'Cliente ya no es importante',
-  );
+  Future<ActionResult> setImportant(bool important) =>
+      _run((svc, chat) => svc.setImportant(chat, important));
 
-  Future<ActionResult> assignToMe() => _patch(
-    {'responsible': #me},
-    (c, me) => c.copyWith(
-      client: c.client!.copyWith(
-        responsible: ChatResponsible(
-          id: me!.id,
-          firstName: me.firstName,
-          lastName: me.lastName,
-        ),
-      ),
-    ),
-    'Chat asignado a ti',
-    needsUser: true,
-  );
+  Future<ActionResult> assignToMe() =>
+      _run((svc, chat) => svc.assignToMe(chat));
 
-  Future<ActionResult> release() => _patch(
-    {'responsible': null},
-    (c, _) => c.copyWith(client: c.client!.copyWith(clearResponsible: true)),
-    'Chat liberado',
-  );
+  Future<ActionResult> release() => _run((svc, chat) => svc.release(chat));
 
-  Future<ActionResult> setResolved(bool resolved) => _patch(
-    {'is_chat_resolved': resolved},
-    (c, _) => c.copyWith(client: c.client!.copyWith(isChatResolved: resolved)),
-    resolved ? 'Chat marcado como resuelto' : 'Chat marcado por resolver',
-  );
+  Future<ActionResult> setResolved(bool resolved) =>
+      _run((svc, chat) => svc.setResolved(chat, resolved));
 
-  Future<ActionResult> setArchived(bool archived) => _patch(
-    {'is_active': !archived},
-    (c, _) => c.copyWith(client: c.client!.copyWith(isActive: !archived)),
-    archived ? 'Chat archivado' : 'Chat desarchivado',
-  );
+  Future<ActionResult> setArchived(bool archived) =>
+      _run((svc, chat) => svc.setArchived(chat, archived));
 
-  Future<ActionResult> markUnread() async {
-    final r = await ref.read(chatRepositoryProvider).markUnread(state.chat.id);
-    if (!ref.mounted) return (ok: false, message: '');
-    if (r case Ok(value: true)) {
-      _setChat(state.chat.copyWith(isUnread: true));
-      ref.read(chatListControllerProvider.notifier).poll();
-      return (ok: true, message: 'Chat marcado como no leído');
-    }
-    return (ok: false, message: 'No se pudo completar la acción');
-  }
+  Future<ActionResult> markUnread() =>
+      _run((svc, chat) => svc.markUnread(chat));
+
+  Future<ActionResult> _run(
+    Future<ChatActionOutcome> Function(ChatActionsService, Chat) call,
+  ) async => _applyOutcome(
+    await call(ref.read(chatActionsServiceProvider), state.chat),
+  );
 }
 
 class _SendJob {
