@@ -4,6 +4,7 @@ import 'package:partsflow_mobile/core/utils/pf_log.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_query.dart';
+import 'package:partsflow_mobile/features/chat/domain/logic/search_text.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
@@ -79,21 +80,6 @@ class ChatSearchState {
 }
 
 // ---- Clasificación del texto (puro, sin red) ---------------------------------
-
-bool hasLetters(String q) => RegExp(r'\p{L}', unicode: true).hasMatch(q);
-
-String onlyDigits(String q) => q.replaceAll(RegExp(r'\D'), '');
-
-/// Patente chilena: 4 letras + 2 dígitos o 2 letras + 4 dígitos, con o sin
-/// separadores. Devuelve la patente normalizada (mayúsculas, sin separadores)
-/// o null.
-String? plateFrom(String q) {
-  final s = q.replaceAll(RegExp(r'[\s\-·.]'), '').toUpperCase();
-  final ok =
-      RegExp(r'^[A-Z]{4}\d{2}$').hasMatch(s) ||
-      RegExp(r'^[A-Z]{2}\d{4}$').hasMatch(s);
-  return ok ? s : null;
-}
 
 /// Búsqueda del modo "Todo": consultas en paralelo; cada sección se actualiza
 /// por separado. Las búsquedas viejas se descartan (`_seq`).

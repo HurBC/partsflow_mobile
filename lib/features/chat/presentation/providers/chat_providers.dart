@@ -10,6 +10,7 @@ import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/data/datasources/chat_remote_datasource.dart';
 import 'package:partsflow_mobile/features/chat/data/repositories/chat_repository_impl.dart';
+import 'package:partsflow_mobile/features/chat/domain/logic/chats.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_query.dart';
 import 'package:partsflow_mobile/features/chat/domain/repositories/chat_repository.dart';
@@ -104,18 +105,13 @@ class ChatListState {
       advanced.count +
       (searchMode != SearchMode.all ? 1 : 0);
 
-  List<Chat> get visible {
-    final now = DateTime.now();
-    final limit = Duration(minutes: pendingThreshold);
-    return items.where((c) {
-      if (filters.isActive && !filters.matches(c)) return false;
-      if (thresholdApplies) {
-        final at = c.activityAt;
-        if (at != null && now.difference(at) <= limit) return false;
-      }
-      return true;
-    }).toList();
-  }
+  List<Chat> get visible => visibleChats(
+    items: items,
+    filters: filters,
+    thresholdApplies: thresholdApplies,
+    pendingThreshold: pendingThreshold,
+    now: DateTime.now(),
+  );
 
   ChatListState copyWith({
     ChatTab? tab,

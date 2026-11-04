@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_event.dart';
+import 'package:partsflow_mobile/core/utils/pf_log.dart';
 
 /// Dos sockets (`chat-list` y `clients`) del subsidiary, con reconexión con
 /// backoff (3 s → 30 s con jitter) y reconexión al volver a primer plano.
@@ -74,7 +75,11 @@ class RealtimeSession with WidgetsBindingObserver {
   }
 
   void _log(String msg) {
-    if (kDebugMode) debugPrint('[realtime] $msg');
+    if (pfDebugLog) {
+      pfLog('[realtime] $msg');
+    } else if (kDebugMode) {
+      debugPrint('[realtime] $msg');
+    }
   }
 }
 
@@ -127,6 +132,7 @@ class _Channel {
     _sub = ws.listen(
       (data) {
         final e = parseRealtimeFrame(data);
+        if (pfDebugLog && e != null) pfLog('rt ${e.runtimeType}');
         if (e != null && !_closed) _s.onEvent(e);
       },
       onDone: () => _lost(ws),

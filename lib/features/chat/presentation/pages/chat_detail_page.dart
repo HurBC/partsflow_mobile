@@ -16,6 +16,7 @@ import 'package:partsflow_mobile/features/chat/domain/entities/send_outcome.dart
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_thread_controller.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.dart';
+import 'package:partsflow_mobile/features/chat/presentation/utils/timeline.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_actions_sheet.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_client_sheets.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_common.dart';
@@ -25,25 +26,6 @@ import 'package:partsflow_mobile/features/chat/presentation/widgets/message_bubb
 import 'package:partsflow_mobile/features/chat/presentation/widgets/swipe_to_reply.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/templates_sheet.dart';
 import 'package:partsflow_mobile/features/orders/domain/entities/order.dart';
-
-sealed class _Entry {
-  const _Entry();
-}
-
-class _Day extends _Entry {
-  const _Day(this.date);
-  final DateTime date;
-}
-
-class _Msg extends _Entry {
-  const _Msg(this.message);
-  final Message message;
-}
-
-class _Note extends _Entry {
-  const _Note(this.note);
-  final ThreadNote note;
-}
 
 class ChatDetailPage extends ConsumerStatefulWidget {
   const ChatDetailPage({super.key, required this.chat});
@@ -57,7 +39,7 @@ class ChatDetailPage extends ConsumerStatefulWidget {
 class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
   final _scroll = ScrollController();
   final _keys = <String, GlobalKey>{};
-  List<_Entry> _lastEntries = const [];
+  List<TimelineEntry> _lastEntries = const [];
   late final ForegroundPoller _poller;
   final _composerFocus = FocusNode();
 
@@ -226,7 +208,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
       .firstOrNull;
 
   int _entryIndex(String id) =>
-      _lastEntries.indexWhere((e) => e is _Msg && e.message.id == id);
+      _lastEntries.indexWhere((e) => e is MsgEntry && e.message.id == id);
 
   /// Alto promedio de los ítems construidos (estimación para la lista perezosa).
   double _avgExtent() {
@@ -310,7 +292,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     int? best;
     for (var i = 0; i < _lastEntries.length; i++) {
       final e = _lastEntries[i];
-      if (e is! _Msg || _keys[e.message.id]?.currentContext == null) continue;
+      if (e is! MsgEntry || _keys[e.message.id]?.currentContext == null) continue;
       if (best == null || (i - idx).abs() < (best - idx).abs()) best = i;
     }
     return best;
@@ -328,52 +310,29 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     });
   }
 
-  String _sig(Message m) => '${m.hasMedia}|${(m.text ?? '').trim()}';
-
-  /// Detecta mensajes que aparecen después de cargado el hilo. Nuevo =
-  /// id desconocido y (local, o más reciente que todo lo conocido): así las
-  /// páginas antiguas nunca cuentan. Un mensaje del servidor que confirma uno
-  /// local (misma firma) no se anima otra vez.
+  /// Detecta mensajes que aparecen después de cargado el hilo (ver
+  /// [classifyMessages]).
   void _classify(ThreadState s) {
     if (!s.historyLoaded) return;
-    final all = [...s.messages, ...s.pending];
     final now = DateTime.now();
-    _localSigs.removeWhere(
-      (e) => now.difference(e.at) > const Duration(minutes: 2),
+    final r = classifyMessages(
+      all: [...s.messages, ...s.pending],
+      baselined: _baselined,
+      known: _known,
+      localSigs: _localSigs,
+      newest: _newest,
+      now: now,
     );
-    if (!_baselined) {
-      _baselined = true;
-      for (final m in all) {
-        _known.add(m.id);
-        if (_newest == null || m.date.isAfter(_newest!)) _newest = m.date;
-      }
-      return;
-    }
-    final base = _newest;
-    for (final m in all) {
-      if (!_known.add(m.id)) continue;
-      if (m.isLocal) {
-        _localSigs.add((sig: _sig(m), at: now));
-        _enter[m.id] = (kind: MessageEntranceKind.own, at: now);
-        continue;
-      }
-      if (base != null && !m.date.isAfter(base)) continue;
-      if (m.isOutbound) {
-        var i = _localSigs.indexWhere((e) => e.sig == _sig(m));
-        // Media: el tipo/leyenda local puede diferir del confirmado.
-        if (i < 0 && m.hasMedia) {
-          i = _localSigs.indexWhere((e) => e.sig.startsWith('true|'));
-        }
-        if (i >= 0) {
-          _localSigs.removeAt(i);
-          continue;
-        }
-      }
-      _enter[m.id] = (kind: MessageEntranceKind.incoming, at: now);
-    }
-    for (final m in all) {
-      if (_newest == null || m.date.isAfter(_newest!)) _newest = m.date;
-    }
+    _baselined = r.baselined;
+    _newest = r.newest;
+    r.entered.forEach((id, kind) {
+      _enter[id] = (
+        kind: kind == EntranceKind.own
+            ? MessageEntranceKind.own
+            : MessageEntranceKind.incoming,
+        at: now,
+      );
+    });
   }
 
   /// true una sola vez por mensaje, mientras la detección sea reciente.
@@ -383,42 +342,6 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     if (DateTime.now().difference(e.at) > _enterWindow) return null;
     _played.add(id);
     return e.kind;
-  }
-
-  List<_Entry> _timeline(ThreadState s) {
-    final all = <({DateTime date, _Entry entry})>[
-      for (final m in s.messages) (date: m.date, entry: _Msg(m)),
-      for (final m in s.pending) (date: m.date, entry: _Msg(m)),
-      for (final n in s.notes) (date: n.date, entry: _Note(n)),
-    ]..sort((a, b) => a.date.compareTo(b.date));
-
-    final asc = <_Entry>[];
-    DateTime? lastDay;
-    for (final e in all) {
-      if (lastDay == null || !sameDay(lastDay, e.date)) {
-        asc.add(_Day(e.date));
-        lastDay = e.date;
-      }
-      asc.add(e.entry);
-    }
-    return asc.reversed.toList();
-  }
-
-  /// ¿El mensaje de `entries[j]` es del mismo remitente que [m] y ≤ 2 min de
-  /// distancia, sin separador de día ni nota entre medio?
-  bool _joined(List<_Entry> entries, int j, Message m, String? myId) {
-    if (j < 0 || j >= entries.length) return false;
-    final o = entries[j];
-    if (o is! _Msg) return false;
-    final other = o.message;
-    if (other.isDeleted != m.isDeleted) return false;
-    final a = m.author(myId);
-    if (a != other.author(myId)) return false;
-    if (a != MessageAuthor.client &&
-        (m.senderName ?? m.agent) != (other.senderName ?? other.agent)) {
-      return false;
-    }
-    return m.date.difference(other.date).abs() <= const Duration(minutes: 2);
   }
 
   @override
@@ -497,7 +420,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     }
 
     _classify(s);
-    final entries = _timeline(s);
+    final entries = buildTimeline(s.messages, s.pending, s.notes);
     _lastEntries = entries;
     final reduce = MediaQuery.disableAnimationsOf(context);
     if (entries.isEmpty) {
@@ -534,9 +457,9 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
           final e = entries[i];
           // `entries` va de nuevo a antiguo: i+1 es el vecino anterior.
           final joinedPrev =
-              e is _Msg && _joined(entries, i + 1, e.message, myId);
+              e is MsgEntry && messagesJoined(entries, i + 1, e.message, myId);
           final joinedNext =
-              e is _Msg && _joined(entries, i - 1, e.message, myId);
+              e is MsgEntry && messagesJoined(entries, i - 1, e.message, myId);
           return Padding(
             padding: EdgeInsets.fromLTRB(
               0,
@@ -545,14 +468,14 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
               joinedNext ? 1 : 4,
             ),
             child: switch (e) {
-              _Day(:final date) => _DayChip(label: dayLabel(date)),
-              _Note(:final note) => Center(
+              DayEntry(:final date) => _DayChip(label: dayLabel(date)),
+              NoteEntry(:final note) => Center(
                 child: Text(
                   note.text,
                   style: TextStyle(fontSize: 12, color: pf.text2),
                 ),
               ),
-              _Msg(:final message) => _messageRow(
+              MsgEntry(:final message) => _messageRow(
                 message,
                 myId,
                 controller,

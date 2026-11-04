@@ -45,6 +45,23 @@ Dio dio(Ref ref) {
   // Diagnóstico: método, path, status y body truncado. Nunca headers ni tokens.
   dio.interceptors.add(
     InterceptorsWrapper(
+      onRequest: (o, handler) {
+        if (pfDebugLog) o.extra['pf_t0'] = DateTime.now().millisecondsSinceEpoch;
+        handler.next(o);
+      },
+      onResponse: (r, handler) {
+        if (pfDebugLog) {
+          final t0 = r.requestOptions.extra['pf_t0'];
+          final ms = t0 is int
+              ? ' ms=${DateTime.now().millisecondsSinceEpoch - t0}'
+              : '';
+          pfLog(
+            'http ${r.requestOptions.method} ${r.requestOptions.uri.path} '
+            'status=${r.statusCode}$ms',
+          );
+        }
+        handler.next(r);
+      },
       onError: (e, handler) {
         if (pfDebugLog) {
           final r = e.response;

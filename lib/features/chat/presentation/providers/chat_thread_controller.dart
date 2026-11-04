@@ -13,6 +13,7 @@ import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message_template.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachment.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/send_outcome.dart';
+import 'package:partsflow_mobile/features/chat/domain/logic/messages.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
@@ -98,15 +99,6 @@ class ThreadState {
 
 typedef ActionResult = ({bool ok, String message});
 
-List<Message> _merge(List<Message> a, List<Message> b) {
-  final byId = {for (final m in a) m.id: m};
-  for (final m in b) {
-    byId[m.id] = m;
-  }
-  final out = byId.values.toList()..sort((x, y) => x.date.compareTo(y.date));
-  return out;
-}
-
 /// Conversación de un chat. La clave es el Chat (igualdad por id): la primera
 /// instancia se crea con el Chat recibido por `extra` desde la lista.
 @riverpod
@@ -140,7 +132,7 @@ class ChatThread extends _$ChatThread {
     switch (r) {
       case Ok(:final value):
         state = state.copyWith(
-          messages: _merge(state.messages, value),
+          messages: mergeMessages(state.messages, value),
           status: ListStatus.data,
           historyLoaded: true,
           // Si la primera página vino llena, puede haber más atrás.
@@ -203,26 +195,8 @@ class ChatThread extends _$ChatThread {
   }
 
   void _applyStatusUpdates(List<Map<String, dynamic>> items) {
-    final byId = <String, String>{};
-    for (final i in items) {
-      final id = nonEmpty(asStr(i['websocket_id'])) ?? nonEmpty(asStr(i['id']));
-      final st = nonEmpty(asStr(i['status']));
-      if (id != null && st != null) byId[id] = st;
-    }
-    if (byId.isEmpty) return;
-    var changed = false;
-    final next = [
-      for (final m in state.messages)
-        if ((byId[m.websocketId] ?? byId[m.id]) case final st?
-            when st != m.status)
-          () {
-            changed = true;
-            return m.copyWith(status: st);
-          }()
-        else
-          m,
-    ];
-    if (changed) state = state.copyWith(messages: next);
+    final next = applyStatusUpdates(state.messages, items);
+    if (next != null) state = state.copyWith(messages: next);
   }
 
   void _applyClientEvent(Map<String, dynamic> d) {
@@ -296,7 +270,7 @@ class ChatThread extends _$ChatThread {
         final known = state.messages.map((m) => m.id).toSet();
         final fresh = value.where((m) => !known.contains(m.id)).toList();
         state = state.copyWith(
-          messages: _merge(state.messages, value),
+          messages: mergeMessages(state.messages, value),
           nextPage: s.nextPage + 1,
           // Una página sin mensajes nuevos corta la paginación.
           hasMoreOlder: value.length >= chatPageSize && fresh.isNotEmpty,
