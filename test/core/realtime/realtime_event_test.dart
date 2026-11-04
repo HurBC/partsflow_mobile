@@ -132,14 +132,23 @@ void main() {
       expect(phoneOfItem({'phone': '', 'chat': <String, dynamic>{}}), isNull);
     });
 
-    test('comportamiento actual: phone tiene prioridad sobre chat.id', () {
-      // comportamiento actual: si ambos difieren, gana `phone`.
+    test('chat.id tiene prioridad sobre phone (chats BSUID)', () {
       expect(
         phoneOfItem({
           'phone': '56911111111',
           'chat': {'id': '56999999999@c.us'},
         }),
-        '56911111111',
+        '56999999999',
+      );
+    });
+
+    test('normalized_chat_id gana sobre phone', () {
+      expect(
+        phoneOfItem({
+          'phone': '56911111111',
+          'normalized_chat_id': '56955555555@c.us',
+        }),
+        '56955555555',
       );
     });
 

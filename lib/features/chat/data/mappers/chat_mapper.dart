@@ -16,6 +16,8 @@ ChatLastMessage? _lastMessage(Object? json) {
     type: asStr(m['type']),
     body: asStr(m['body']),
     date: asDate(m['date']),
+    messageId: nonEmpty(asStr(m['message_id'])),
+    websocketId: nonEmpty(asStr(m['websocket_id'])),
   );
 }
 
@@ -152,8 +154,13 @@ Message? messageFromJson(Object? json) {
       cards.add(ContactCard(name: n, phones: phones));
     }
 
+    // El evento realtime no trae `id`: message_id/websocket_id son únicos por
+    // mensaje; el sintético (fecha+tipo) es último recurso y puede colisionar.
     final id =
-        nonEmpty(asStr(m['id'])) ?? '${date.microsecondsSinceEpoch}-$type';
+        nonEmpty(asStr(m['id'])) ??
+        nonEmpty(asStr(m['message_id'])) ??
+        nonEmpty(asStr(m['websocket_id'])) ??
+        '${date.microsecondsSinceEpoch}-$type';
     return Message(
       id: id,
       messageId: nonEmpty(asStr(m['message_id'])),

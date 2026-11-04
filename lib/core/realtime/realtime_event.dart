@@ -66,14 +66,17 @@ List<Map<String, dynamic>> _items(Object? v) => [
 String phoneDigits(String? raw) =>
     (raw ?? '').split('@').first.replaceAll(RegExp(r'\D'), '');
 
-/// Teléfono del ítem de un evento: `phone`, `chat.id`/`chat`, `chat_id`,
-/// `from`, `to`. null si no se puede determinar.
+/// Teléfono (solo dígitos) del chat al que pertenece el ítem de un evento.
+/// Prefiere los identificadores de chat (`chat.id`/`chat`, `chat_id`,
+/// `normalized_chat_id`) sobre `phone` (con chats BSUID el phone puede no
+/// coincidir con el chat), luego `from`, `to`. null si no se puede determinar.
 String? phoneOfItem(Map<String, dynamic> item) {
   for (final key in const [
-    'phone',
     'chat',
     'chat_id',
     'chatId',
+    'normalized_chat_id',
+    'phone',
     'from',
     'to',
   ]) {

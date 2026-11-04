@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:partsflow_mobile/core/errors/failure.dart';
+import 'package:partsflow_mobile/core/config/perf_flags.dart';
 import 'package:partsflow_mobile/core/network/dio_client.dart';
 import 'package:partsflow_mobile/core/providers/auth_state_provider.dart';
 import 'package:partsflow_mobile/core/providers/storage_providers.dart';
@@ -11,12 +12,14 @@ import 'package:partsflow_mobile/core/utils/reload_gate.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/data/datasources/chat_remote_datasource.dart';
+import 'package:partsflow_mobile/features/chat/data/mappers/chat_mapper.dart';
 import 'package:partsflow_mobile/features/chat/data/repositories/chat_repository_impl.dart';
 import 'package:partsflow_mobile/features/chat/domain/logic/chats.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_query.dart';
 import 'package:partsflow_mobile/features/chat/domain/repositories/chat_repository.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_search_provider.dart';
+import 'package:partsflow_mobile/features/chat/presentation/providers/open_chat_provider.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 part 'chat_providers.g.dart';
@@ -154,13 +157,21 @@ class ChatListState {
 class ChatListController extends _$ChatListController {
   int _seq = 0;
   late ReloadGate _gate;
+  // Eventos recibidos con una carga de primera página en vuelo, con el _seq de
+  // esa carga: al aplicarse su respuesta (que pudo empezar antes del evento)
+  // se re-aplican sobre los items nuevos. Las funciones puras son idempotentes.
+  final _inFlightEvents = <({int seq, RealtimeEvent event})>[];
   bool _signalPending = false;
 
   @override
   ChatListState build() {
     // Un gate por build: Riverpod reutiliza esta instancia al reconstruir y el
     // gate anterior queda dispuesto.
-    final gate = _gate = ReloadGate(signalGap: const Duration(seconds: 1));
+    final gate = _gate = ReloadGate(
+      // Con parche local la señal solo llega cuando no se pudo resolver
+      // localmente: se agrupa más.
+      signalGap: Duration(seconds: pfPatchList ? 3 : 1),
+    );
     _signalPending = false;
     // Al cambiar la sesión se descarta todo y se vuelve a cargar.
     ref.watch(sessionActiveProvider);
@@ -171,6 +182,8 @@ class ChatListController extends _$ChatListController {
       if (!ref.mounted) return;
       if (e is RealtimeResync) {
         autoPoll();
+      } else if (pfPatchList) {
+        if (_patchFromEvent(e)) _signalPoll();
       } else {
         _signalPoll();
       }
@@ -218,6 +231,7 @@ class ChatListController extends _$ChatListController {
     bool merge = false,
   }) async {
     final seq = ++_seq;
+    _inFlightEvents.removeWhere((x) => x.seq < seq);
     if (skeleton) {
       state = state.copyWith(
         status: ListStatus.loading,
@@ -276,6 +290,11 @@ class ChatListController extends _$ChatListController {
           ),
         );
     if (!ref.mounted || seq != _seq) return null;
+    final buffered = [
+      for (final x in _inFlightEvents)
+        if (x.seq == seq) x.event,
+    ];
+    _inFlightEvents.removeWhere((x) => x.seq <= seq);
     switch (result) {
       case Ok(:final value):
         _gate.markSuccess();
@@ -291,6 +310,9 @@ class ChatListController extends _$ChatListController {
           cursorId = state.cursorId;
           hasMore = state.hasMore;
           pages = state.pagesLoaded;
+        }
+        for (final e in buffered) {
+          items = _patchItems(e, items, state).items ?? items;
         }
         state = state.copyWith(
           status: ListStatus.data,
@@ -334,6 +356,53 @@ class ChatListController extends _$ChatListController {
     if (state.status != ListStatus.data || state.loadingMore) return;
     if (state.isGlobalSearch) return;
     await _gate.auto(() => _doLoadFirst(skeleton: false, merge: true));
+  }
+
+  /// Aplica el evento a la lista cargada. Devuelve true si hay que recargar
+  /// (no se pudo resolver localmente).
+  bool _patchFromEvent(RealtimeEvent e) {
+    final s = state;
+    // Sin datos o con búsqueda global no hay lista que parchear; la carga en
+    // curso (o la salida de la búsqueda) ya trae datos frescos.
+    if (s.status != ListStatus.data || s.isGlobalSearch) return false;
+    // Si hay una carga de primera página en vuelo pudo empezar antes del
+    // evento: se guarda para re-aplicarlo sobre su respuesta.
+    if (_gate.inFlight) {
+      _inFlightEvents.add((seq: _seq, event: e));
+    }
+    final p = _patchItems(e, s.items, s);
+    if (p.items != null) state = s.copyWith(items: p.items);
+    return p.needsReload;
+  }
+
+  ChatListPatch _patchItems(RealtimeEvent e, List<Chat> items, ChatListState s) {
+    final searchActive = s.searchText.isNotEmpty;
+    final advanced = s.advanced.isActive;
+    switch (e) {
+      case RealtimeNewMessages(items: final raws):
+        return applyNewMessages(
+          items,
+          raws,
+          parse: messageFromJson,
+          isOpen: ref.read(openChatRegistryProvider).isOpen,
+          tab: s.tab,
+          advancedActive: advanced,
+          searchActive: searchActive,
+        );
+      case RealtimeStatusUpdates(items: final updates):
+        return ChatListPatch(applyStatusToChats(items, updates));
+      case RealtimeClientChanged(:final type, :final data):
+        return applyClientChange(
+          items,
+          type,
+          data,
+          tab: s.tab,
+          advancedActive: advanced,
+          searchActive: searchActive,
+        );
+      case RealtimeResync():
+        return ChatListPatch.none;
+    }
   }
 
   /// Señal de datos nuevos (evento realtime): nunca se pierde, se coalesce.

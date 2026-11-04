@@ -14,6 +14,7 @@ import 'package:partsflow_mobile/features/auth/presentation/providers/auth_provi
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/send_outcome.dart';
+import 'package:partsflow_mobile/features/chat/presentation/providers/open_chat_provider.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_thread_controller.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.dart';
@@ -58,10 +59,13 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
   String? _flashId;
   int _flashSerial = 0;
   Timer? _flashTimer;
+  late final OpenChatRegistry _openChat;
 
   @override
   void initState() {
     super.initState();
+    _openChat = ref.read(openChatRegistryProvider);
+    _openChat.open(widget.chat.id);
     _scroll.addListener(() {
       // Lista invertida: "después" = mensajes más antiguos.
       if (_scroll.hasClients && _scroll.position.extentAfter < 300) {
@@ -77,6 +81,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
 
   @override
   void dispose() {
+    _openChat.close(widget.chat.id);
     _poller.dispose();
     _flashTimer?.cancel();
     _composerFocus.dispose();

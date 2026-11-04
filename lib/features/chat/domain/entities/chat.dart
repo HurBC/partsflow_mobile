@@ -20,7 +20,20 @@ class ChatTag {
 }
 
 class ChatLastMessage {
-  const ChatLastMessage({this.flow, this.ack, this.type, this.body, this.date});
+  const ChatLastMessage({
+    this.flow,
+    this.ack,
+    this.type,
+    this.body,
+    this.date,
+    this.messageId,
+    this.websocketId,
+  });
+
+  /// Ids del mensaje (si el servidor los envía o vienen de un evento realtime):
+  /// permiten deduplicar y casar actualizaciones de estado.
+  final String? messageId;
+  final String? websocketId;
 
   /// 'inbound' | 'outbound'
   final String? flow;

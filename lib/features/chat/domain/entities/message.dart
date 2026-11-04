@@ -134,13 +134,14 @@ class Message {
   }
 
   Message copyWith({
+    String? id,
     String? status,
     String? errorText,
     bool clearError = false,
     double? uploadProgress,
     bool clearProgress = false,
   }) => Message(
-    id: id,
+    id: id ?? this.id,
     messageId: messageId,
     date: date,
     type: type,

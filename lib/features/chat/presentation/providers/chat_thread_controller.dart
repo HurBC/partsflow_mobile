@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:partsflow_mobile/core/config/perf_flags.dart';
 import 'package:partsflow_mobile/core/errors/failure.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_event.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
@@ -9,6 +10,7 @@ import 'package:partsflow_mobile/core/utils/reload_gate.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/domain/entities/api_user.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
+import 'package:partsflow_mobile/features/chat/data/mappers/chat_mapper.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message_template.dart';
@@ -185,17 +187,62 @@ class ChatThread extends _$ChatThread {
         _scheduleReload();
       case RealtimeNewMessages(:final items):
         // El canal trae los mensajes de todo el subsidiary: solo los de este
-        // chat; si no se puede determinar el teléfono, se recarga por si acaso.
-        final mine = items.where((i) {
-          final p = phoneOfItem(i);
-          return p == null || p == phoneDigits(chat.phone);
-        });
-        if (mine.isNotEmpty) _signalReload();
+        // chat; si no se puede determinar el chat, se recarga por si acaso.
+        final mine = items.where((i) => _isForThisChat(i, chat) ?? true);
+        if (mine.isEmpty) return;
+        if (!pfPatchThread || !_patchNewMessages(mine.toList(), items)) {
+          _signalReload();
+        }
       case RealtimeStatusUpdates(:final items):
         _applyStatusUpdates(items);
       case RealtimeClientChanged(:final data):
         _applyClientEvent(data);
     }
+  }
+
+  /// true/false si el ítem es/no es de [chat]; null si no trae identificador
+  /// comparable. Compara primero el id crudo de chat (chat.id, normalized_chat_id…)
+  /// y luego los dígitos (phoneOfItem prefiere ids de chat sobre `phone`).
+  bool? _isForThisChat(Map<String, dynamic> item, Chat chat) {
+    String norm(String? v) =>
+        (v ?? '').trim().toLowerCase().replaceAll('+', '');
+    final mine = norm(chat.id);
+    for (final k in const ['chat', 'chat_id', 'chatId', 'normalized_chat_id']) {
+      final v = item[k];
+      final raw = norm(v is Map ? asStr(v['id']) : asStr(v));
+      if (raw.isNotEmpty && raw == mine) return true;
+    }
+    final p = phoneOfItem(item);
+    return p == null ? null : p == phoneDigits(chat.phone);
+  }
+
+  /// Aplica los mensajes del evento como parche local. Devuelve false si hay
+  /// que recargar (fallback): chat no cargado aún, ítem sin identificador de
+  /// mensaje usable o no mapeable, o eco de un mensaje propio con envíos en
+  /// curso (el vínculo local<->servidor no es fiable: el evento no trae el id
+  /// local y la recarga + messageId reconcilia).
+  bool _patchNewMessages(
+    List<Map<String, dynamic>> mine,
+    List<Map<String, dynamic>> all,
+  ) {
+    if (state.status != ListStatus.data) return false;
+    // Ítems de dudosa pertenencia (sin identificador de chat) => recargar.
+    if (all.any((i) => _isForThisChat(i, state.chat) == null)) return false;
+    final hasPending = state.pending.any((m) => m.status != 'error');
+    final parsed = <Message>[];
+    for (final i in mine) {
+      if (nonEmpty(asStr(i['message_id'])) == null &&
+          nonEmpty(asStr(i['websocket_id'])) == null) {
+        return false;
+      }
+      final m = messageFromJson(i);
+      if (m == null) return false;
+      if (hasPending && m.isOutbound) return false;
+      parsed.add(m);
+    }
+    final next = applyNewMessages(state.messages, parsed);
+    if (next != null) state = state.copyWith(messages: next);
+    return true;
   }
 
   /// Mensajes nuevos de este chat: nunca se pierde, se coalesce.
