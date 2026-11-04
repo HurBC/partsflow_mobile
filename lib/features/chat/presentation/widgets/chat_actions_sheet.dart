@@ -136,7 +136,7 @@ class _ActionsSheet extends StatelessWidget {
         enabled: canAct,
       ),
       _Item(
-        'Recordarme más tarde',
+        'Recordatorios',
         Icons.schedule,
         ChatAction.reminder,
         detail: chat.hasPendingReminder

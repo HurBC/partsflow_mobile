@@ -18,6 +18,7 @@ import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message_template.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachment.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/quick_answer.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/reminder.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/send_outcome.dart';
 import 'package:partsflow_mobile/features/chat/domain/repositories/chat_repository.dart';
 
@@ -543,6 +544,41 @@ class ChatRepositoryImpl implements ChatRepository {
       'reminder_time': time,
       'comment': comment,
     });
+    return true;
+  });
+
+  @override
+  Future<Result<List<Reminder>>> pendingReminders(String chatId) =>
+      _guard(() async {
+        final out = <Reminder>[];
+        for (final r in _items(await _remote.pendingReminders(chatId))) {
+          final rem = reminderFromJson(asMap(r));
+          if (rem != null) out.add(rem);
+        }
+        out.sort((a, b) => a.dueAt.compareTo(b.dueAt));
+        return out;
+      });
+
+  @override
+  Future<Result<bool>> resolveReminder(String id) => _guard(() async {
+    await _remote.resolveReminder(id);
+    return true;
+  });
+
+  @override
+  Future<Result<bool>> extendReminder({
+    required Reminder reminder,
+    required String userId,
+    required int minutes,
+  }) => _guard(() async {
+    await _remote.createReminder({
+      'reminder_type': 'minutes',
+      'chat_id': reminder.chatId,
+      'responsible': userId,
+      'reminder_time': minutes,
+      'comment': reminder.comment ?? '',
+    });
+    await _remote.resolveReminder(reminder.id);
     return true;
   });
 }

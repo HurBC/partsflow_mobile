@@ -1,6 +1,7 @@
 import 'package:partsflow_mobile/core/utils/json_utils.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/reminder.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/send_outcome.dart';
 import 'package:partsflow_mobile/features/orders/domain/entities/order.dart';
 
@@ -229,4 +230,26 @@ OrderStrip? orderStripFromJson(Object? json) {
   final stage =
       OrderStage.fromStatus(asStr(first['status'])) ?? OrderStage.porCotizar;
   return OrderStrip(id: id, stage: stage);
+}
+
+/// Fila de `clients/reminder/` → [Reminder]; null si no trae id o fecha.
+Reminder? reminderFromJson(Map<String, dynamic>? m) {
+  if (m == null) return null;
+  final id = nonEmpty(asStr(m['id']));
+  final dueAt = asDate(m['reminder_delta_time']);
+  if (id == null || dueAt == null || asBool(m['resolved']) == true) return null;
+  final type = asStr(m['reminder_type']) ?? 'custom';
+  final responsible = nonEmpty(asStr(m['responsible']));
+  return Reminder(
+    id: id,
+    chatId: asStr(m['chat_id']) ?? '',
+    dueAt: dueAt,
+    comment: nonEmpty(asStr(m['comment'])),
+    type: type,
+    responsibleId: responsible,
+    isAutomatic:
+        asBool(m['is_automatic']) ??
+        (responsible == null || type == 'erp_sync_error'),
+    isExtended: asBool(m['is_extended']) ?? false,
+  );
 }
