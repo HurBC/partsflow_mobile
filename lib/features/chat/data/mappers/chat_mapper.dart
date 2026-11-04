@@ -116,6 +116,7 @@ Message? messageFromJson(Object? json) {
     String? caption;
     String? mediaId;
     String? mediaMime;
+    var mediaPending = false;
     final media = m['media'];
     if (media is String) {
       mediaUrl = nonEmpty(media);
@@ -126,6 +127,7 @@ Message? messageFromJson(Object? json) {
       caption = nonEmpty(asStr(mm?['caption']));
       mediaId = nonEmpty(asStr(mm?['id']));
       mediaMime = nonEmpty(asStr(mm?['mime']));
+      mediaPending = (asBool(mm?['pending']) ?? false) && mediaUrl == null;
     }
     final text = nonEmpty(asStr(m['message'])) ?? caption;
 
@@ -191,6 +193,7 @@ Message? messageFromJson(Object? json) {
       errorCode: asInt(m['error_code']),
       isEdited:
           (asBool(m['is_edited']) ?? false) || asStr(m['status']) == 'edited',
+      mediaPending: mediaPending,
     );
   } catch (_) {
     return null;

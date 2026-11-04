@@ -54,6 +54,7 @@ class Message {
     this.websocketId,
     this.errorCode,
     this.isEdited = false,
+    this.mediaPending = false,
   });
 
   final String id;
@@ -108,6 +109,9 @@ class Message {
   /// `is_edited` o `status == 'edited'`.
   final bool isEdited;
 
+  /// `media.pending`: la media aún se está descargando en el servidor (sin url).
+  final bool mediaPending;
+
   /// Eliminado/revocado (`status` removed | revoked): se muestra como "Mensaje eliminado".
   bool get isDeleted => status == 'removed' || status == 'revoked';
 
@@ -153,6 +157,12 @@ class Message {
     bool clearError = false,
     double? uploadProgress,
     bool clearProgress = false,
+    String? mediaUrl,
+    String? mediaFilename,
+    String? mediaId,
+    String? mediaMime,
+    String? localPath,
+    bool? mediaPending,
   }) => Message(
     id: id ?? this.id,
     messageId: messageId,
@@ -166,8 +176,8 @@ class Message {
     agent: agent,
     responsibleId: responsibleId,
     source: source,
-    mediaUrl: mediaUrl,
-    mediaFilename: mediaFilename,
+    mediaUrl: mediaUrl ?? this.mediaUrl,
+    mediaFilename: mediaFilename ?? this.mediaFilename,
     quotedBody: quotedBody,
     quotedFrom: quotedFrom,
     quotedWid: quotedWid,
@@ -177,9 +187,9 @@ class Message {
     longitude: longitude,
     contactNames: contactNames,
     contacts: contacts,
-    mediaId: mediaId,
-    mediaMime: mediaMime,
-    localPath: localPath,
+    mediaId: mediaId ?? this.mediaId,
+    mediaMime: mediaMime ?? this.mediaMime,
+    localPath: localPath ?? this.localPath,
     uploadProgress: clearProgress
         ? null
         : (uploadProgress ?? this.uploadProgress),
@@ -188,6 +198,7 @@ class Message {
     websocketId: websocketId,
     errorCode: errorCode,
     isEdited: isEdited,
+    mediaPending: mediaPending ?? this.mediaPending,
   );
 
   @override
@@ -228,7 +239,8 @@ class Message {
           other.errorText == errorText &&
           other.websocketId == websocketId &&
           other.errorCode == errorCode &&
-          other.isEdited == isEdited;
+          other.isEdited == isEdited &&
+          other.mediaPending == mediaPending;
 
   @override
   int get hashCode => Object.hashAll([
@@ -264,5 +276,6 @@ class Message {
     websocketId,
     errorCode,
     isEdited,
+    mediaPending,
   ]);
 }

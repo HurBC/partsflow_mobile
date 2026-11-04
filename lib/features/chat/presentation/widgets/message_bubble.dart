@@ -101,7 +101,9 @@ class MessageBubble extends StatelessWidget {
     final isImage =
         !message.isDeleted &&
         message.type == 'image' &&
-        (message.mediaUrl != null || message.localPath != null);
+        (message.mediaUrl != null ||
+            message.localPath != null ||
+            message.mediaPending);
     final deleted = message.isDeleted;
     var text = deleted ? null : message.text;
     // Documento cuyo pie repite el nombre del archivo: no se muestra dos veces.
@@ -201,6 +203,14 @@ class MessageBubble extends StatelessWidget {
           const SizedBox.shrink()
         else if (message.localPath != null)
           LocalMediaView(message: message, color: fg)
+        else if (message.mediaPending &&
+            message.mediaUrl == null &&
+            (message.type == 'image' || message.type == 'video'))
+          _PendingThumb(bg: pf.divider, color: pf.text2)
+        else if (message.mediaPending &&
+            message.mediaUrl == null &&
+            const {'audio', 'ptt', 'voice', 'document'}.contains(message.type))
+          _PendingTile(message: message, color: fg)
         else if (isImage)
           _ImageContent(
             url: message.mediaUrl!,
@@ -608,6 +618,77 @@ class _TypeChip extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Media pendiente de imagen/video: mismo tamaño que la miniatura (200x150)
+/// para que no haya salto de layout al llegar la url.
+class _PendingThumb extends StatelessWidget {
+  const _PendingThumb({required this.bg, required this.color});
+
+  final Color bg;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 200,
+    height: 150,
+    alignment: Alignment.center,
+    decoration: BoxDecoration(
+      color: bg,
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: SizedBox(
+      width: 22,
+      height: 22,
+      child: CircularProgressIndicator(strokeWidth: 2, color: color),
+    ),
+  );
+}
+
+/// Media pendiente de audio/documento: control deshabilitado con indicador.
+class _PendingTile extends StatelessWidget {
+  const _PendingTile({required this.message, required this.color});
+
+  final Message message;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = message.type == 'document' && message.mediaFilename != null
+        ? message.mediaFilename!
+        : labelForType(message.type);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Opacity(
+        opacity: 0.6,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(iconForType(message.type), size: 20, color: color),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2, color: color),
+            ),
+          ],
+        ),
       ),
     );
   }
