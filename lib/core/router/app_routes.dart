@@ -4,6 +4,7 @@ abstract class AppRoutes {
   static const orders = "/orders";
   static const chat = "/chat";
   static const profile = "/profile";
+  static const splash = "/splash";
 
   // Add more in the future
   static String orderDetail(int id) => "/orders/$id";

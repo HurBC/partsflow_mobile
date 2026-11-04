@@ -5,12 +5,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:partsflow_mobile/app.dart';
 import 'package:partsflow_mobile/core/media/media_cache_purge.dart';
+import 'package:partsflow_mobile/core/providers/theme_mode_provider.dart';
 import 'package:path_provider/path_provider.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  runApp(const ProviderScope(child: PartsFlow()));
+  // Lectura rápida (un solo acceso a prefs, luego en caché): evita el
+  // parpadeo system -> tema guardado en el primer frame.
+  final themeMode = await readSavedThemeMode();
+
+  runApp(
+    ProviderScope(
+      overrides: [initialThemeModeProvider.overrideWithValue(themeMode)],
+      child: const PartsFlow(),
+    ),
+  );
   _schedulePurge();
 }
 

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Igual a PfColors.light.bg -->
+    <color name="splash_background">#F3F4F9</color>
+</resources>

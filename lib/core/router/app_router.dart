@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:partsflow_mobile/core/providers/auth_state_provider.dart';
 import 'package:partsflow_mobile/core/router/app_routes.dart';
 import 'package:partsflow_mobile/core/router/app_shell.dart';
+import 'package:partsflow_mobile/core/router/splash_page.dart';
 import 'package:partsflow_mobile/features/auth/presentation/pages/login_page.dart';
 import 'package:partsflow_mobile/features/auth/presentation/pages/new_password_page.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
@@ -26,6 +27,42 @@ class RouterNotifier extends ChangeNotifier {
   final Ref _ref;
 }
 
+/// Decide el redirect según la sesión. Mientras carga manda a /splash
+/// (guardando el destino en `from`); al resolver vuelve a ese destino o va a
+/// login. Función pura para poder probarla.
+String? resolveAuthRedirect(AsyncValue<bool> authState, Uri uri) {
+  final location = uri.path;
+  final onSplash = location == AppRoutes.splash;
+  final onLogin = location.startsWith(AppRoutes.login);
+
+  if (authState.isLoading && !authState.hasValue && !authState.hasError) {
+    if (onSplash) return null;
+    return Uri(
+      path: AppRoutes.splash,
+      queryParameters: {'from': uri.toString()},
+    ).toString();
+  }
+
+  final isAuthenticated = authState.hasError ? false : authState.value == true;
+
+  if (!isAuthenticated) return onLogin ? null : AppRoutes.login;
+
+  if (onSplash) {
+    final from = uri.queryParameters['from'];
+    final valid =
+        from != null &&
+        from.startsWith('/') &&
+        !from.startsWith('//') &&
+        !from.contains(':') &&
+        !from.startsWith(AppRoutes.splash) &&
+        !from.startsWith(AppRoutes.login);
+    return valid ? from : AppRoutes.chat;
+  }
+  if (onLogin) return AppRoutes.chat;
+
+  return null;
+}
+
 @Riverpod(keepAlive: true)
 GoRouter appRouter(Ref ref) {
   final notifier = RouterNotifier(ref);
@@ -35,23 +72,13 @@ GoRouter appRouter(Ref ref) {
     navigatorKey: rootNavigatorKey,
     initialLocation: AppRoutes.chat,
     refreshListenable: notifier,
-    redirect: (context, state) {
-      final authState = ref.read(authStateProvider);
-
-      return authState.when(
-        data: (isAuthenticated) {
-          final isOnLogin = state.matchedLocation.startsWith(AppRoutes.login);
-
-          if (!isAuthenticated && !isOnLogin) return AppRoutes.login;
-          if (isAuthenticated && isOnLogin) return AppRoutes.chat;
-
-          return null;
-        },
-        error: (_, _) => AppRoutes.login,
-        loading: () => null,
-      );
-    },
+    redirect: (context, state) =>
+        resolveAuthRedirect(ref.read(authStateProvider), state.uri),
     routes: [
+      GoRoute(
+        path: AppRoutes.splash,
+        builder: (context, state) => const SplashPage(),
+      ),
       GoRoute(
         path: AppRoutes.login,
         builder: (context, state) => const LoginPage(),
@@ -68,52 +95,66 @@ GoRouter appRouter(Ref ref) {
           ),
         ],
       ),
-      ShellRoute(
-        builder: (context, state, child) => AppShell(child: child),
-        routes: [
-          GoRoute(
-            path: AppRoutes.orders,
-            builder: (context, state) => const OrdersPage(),
+      // Una rama por tab (IndexedStack): conservan estado, scroll y búsqueda.
+      StatefulShellRoute.indexedStack(
+        builder: (context, state, navigationShell) =>
+            AppShell(navigationShell: navigationShell),
+        branches: [
+          StatefulShellBranch(
             routes: [
               GoRoute(
-                path: ":id",
-                // Sobre el shell (sin barra inferior) para dejar libre el botón
-                // de mover etapa. El pedido en `extra` es opcional (se muestra
-                // mientras carga el detalle).
-                parentNavigatorKey: rootNavigatorKey,
-                redirect: (context, state) =>
-                    int.tryParse(state.pathParameters["id"] ?? "") == null
-                    ? AppRoutes.orders
-                    : null,
-                builder: (context, state) => OrderDetailPage(
-                  id: int.parse(state.pathParameters["id"]!),
-                  initial: state.extra is OrderSummary
-                      ? state.extra as OrderSummary
-                      : null,
-                ),
+                path: AppRoutes.chat,
+                builder: (context, state) => const ChatListPage(),
+                routes: [
+                  GoRoute(
+                    path: ":id",
+                    // Se abre sobre el shell (sin barra inferior) para dejar
+                    // el compositor libre. Sin el Chat en `extra` (p. ej. tras
+                    // reiniciar la app) se vuelve a la lista.
+                    parentNavigatorKey: rootNavigatorKey,
+                    redirect: (context, state) =>
+                        state.extra is Chat ? null : AppRoutes.chat,
+                    builder: (context, state) =>
+                        ChatDetailPage(chat: state.extra as Chat),
+                  ),
+                ],
               ),
             ],
           ),
-          GoRoute(
-            path: AppRoutes.chat,
-            builder: (context, state) => const ChatListPage(),
+          StatefulShellBranch(
             routes: [
               GoRoute(
-                path: ":id",
-                // Se abre sobre el shell (sin barra inferior) para dejar el
-                // compositor libre. Sin el Chat en `extra` (p. ej. tras
-                // reiniciar la app) se vuelve a la lista.
-                parentNavigatorKey: rootNavigatorKey,
-                redirect: (context, state) =>
-                    state.extra is Chat ? null : AppRoutes.chat,
-                builder: (context, state) =>
-                    ChatDetailPage(chat: state.extra as Chat),
+                path: AppRoutes.orders,
+                builder: (context, state) => const OrdersPage(),
+                routes: [
+                  GoRoute(
+                    path: ":id",
+                    // Sobre el shell (sin barra inferior) para dejar libre el botón
+                    // de mover etapa. El pedido en `extra` es opcional (se muestra
+                    // mientras carga el detalle).
+                    parentNavigatorKey: rootNavigatorKey,
+                    redirect: (context, state) =>
+                        int.tryParse(state.pathParameters["id"] ?? "") == null
+                        ? AppRoutes.orders
+                        : null,
+                    builder: (context, state) => OrderDetailPage(
+                      id: int.parse(state.pathParameters["id"]!),
+                      initial: state.extra is OrderSummary
+                          ? state.extra as OrderSummary
+                          : null,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
-          GoRoute(
-            path: AppRoutes.profile,
-            builder: (context, state) => const ProfilePage(),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: AppRoutes.profile,
+                builder: (context, state) => const ProfilePage(),
+              ),
+            ],
           ),
         ],
       ),

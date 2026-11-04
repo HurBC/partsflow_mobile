@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:partsflow_mobile/core/router/tab_visibility.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
@@ -37,6 +38,8 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
   late final ForegroundPoller _poller;
   // true mientras la conversación está abierta encima de la lista.
   bool _covered = false;
+  // false mientras otra tab del shell está al frente (la rama sigue viva).
+  bool _tabVisible = true;
 
   @override
   void initState() {
@@ -44,14 +47,17 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
     _scroll.addListener(_onScroll);
     // El umbral de Pendientes depende de la hora: re-evaluar cada 30 s.
     _clock = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted && ref.read(chatListControllerProvider).thresholdApplies) {
+      if (mounted &&
+          _tabVisible &&
+          !_covered &&
+          ref.read(chatListControllerProvider).thresholdApplies) {
         // Solo reconstruye la lista si el resultado visible cambia.
         ref.read(chatClockProvider.notifier).tick();
       }
     });
     _poller = ForegroundPoller(
       interval: _pollEvery(ref.read(realtimeProvider)),
-      isEnabled: () => mounted && !_covered,
+      isEnabled: () => mounted && !_covered && _tabVisible,
       onTick: () {
         if (ref.read(apiUserProvider).value == null &&
             !ref.read(apiUserProvider).isLoading) {
@@ -60,6 +66,18 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
         ref.read(chatListControllerProvider.notifier).autoPoll();
       },
     )..start();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final visible = TabVisibility.isActive(context, 0);
+    if (visible == _tabVisible) return;
+    _tabVisible = visible;
+    // Al volver a la tab el poller estuvo pausado: refresca (con cooldown).
+    if (visible && !_covered) {
+      ref.read(chatListControllerProvider.notifier).autoPoll();
+    }
   }
 
   // Socket sano: watchdog de 120 s; si no, 20 s.
