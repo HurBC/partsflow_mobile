@@ -165,6 +165,7 @@ class ChatThread extends _$ChatThread {
         t.cancel();
       }
       _mediaTimers.clear();
+      _mediaWatched.clear();
       gate.dispose();
     });
     Future.microtask(() async {
@@ -333,6 +334,15 @@ class ChatThread extends _$ChatThread {
 
   /// Arma el timer de seguridad de cada mensaje con media pendiente.
   void _watchPendingMedia(List<Message> messages) {
+    final pending = {
+      for (final m in messages)
+        if (m.mediaPending) m.messageId ?? m.id,
+    };
+    // Los que dejaron de estar pendientes: cancelar timer y olvidar la key.
+    for (final k in _mediaWatched.difference(pending).toList()) {
+      _mediaTimers.remove(k)?.cancel();
+      _mediaWatched.remove(k);
+    }
     for (final m in messages) {
       if (!m.mediaPending) continue;
       final key = m.messageId ?? m.id;

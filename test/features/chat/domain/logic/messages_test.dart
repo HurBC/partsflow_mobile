@@ -356,4 +356,58 @@ void main() {
     expect(r.mediaPending, isFalse);
     expect(r.mediaUrl, 'http://x');
   });
+
+  group('carrera de media pendiente', () {
+    Message img({
+      String? url,
+      bool pending = false,
+      String? localPath,
+      double? progress,
+    }) => Message(
+      id: 'a',
+      messageId: 'w1',
+      date: DateTime.utc(2025),
+      type: 'image',
+      mediaUrl: url,
+      mediaFilename: url == null ? null : 'f.jpg',
+      mediaPending: pending,
+      localPath: localPath,
+      uploadProgress: progress,
+    );
+
+    test('mergeMessages: respuesta vieja pending no pisa media resuelta', () {
+      final r = mergeMessages(
+        [img(url: 'http://x/f.jpg')],
+        [img(pending: true)],
+      ).single;
+      expect(r.mediaUrl, 'http://x/f.jpg');
+      expect(r.mediaFilename, 'f.jpg');
+      expect(r.mediaPending, isFalse);
+    });
+    test('mergeMessages: pending sobre pending se mantiene', () {
+      final r = mergeMessages(
+        [img(pending: true)],
+        [img(pending: true)],
+      ).single;
+      expect(r.mediaPending, isTrue);
+    });
+    test('mergeMessages: resuelta sobre pending aplica', () {
+      final r = mergeMessages([img(pending: true)], [img(url: 'u')]).single;
+      expect(r.mediaUrl, 'u');
+      expect(r.mediaPending, isFalse);
+    });
+    test('applyMessageUpdates: update viejo pending no pisa resuelta', () {
+      final r = applyMessageUpdates([img(url: 'u')], [img(pending: true)]);
+      expect(r, isNull);
+    });
+    test('applyMessageUpdates conserva localPath y progreso locales', () {
+      final r = applyMessageUpdates(
+        [img(pending: true, localPath: '/tmp/a.jpg', progress: 0.5)],
+        [img(url: 'u')],
+      )!.single;
+      expect(r.mediaUrl, 'u');
+      expect(r.localPath, '/tmp/a.jpg');
+      expect(r.uploadProgress, 0.5);
+    });
+  });
 }

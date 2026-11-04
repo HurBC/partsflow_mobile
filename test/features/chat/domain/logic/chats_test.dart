@@ -166,7 +166,13 @@ void realtimePatchTests() {
     Map<String, dynamic> e, {
     String? open,
     ChatTab tab = ChatTab.all,
-  }) => applyNewMessages(items, [e], parse: parse, isOpen: (id) => id == open, tab: tab);
+  }) => applyNewMessages(
+    items,
+    [e],
+    parse: parse,
+    isOpen: (id) => id == open,
+    tab: tab,
+  );
 
   group('applyNewMessages', () {
     test('entrante a chat cerrado: sube al tope y unread+1', () {
@@ -243,16 +249,22 @@ void realtimePatchTests() {
     });
     test('Resueltos/Archivados + entrante: recarga; saliente no', () {
       for (final t in [ChatTab.resolved, ChatTab.archived]) {
-        expect(run([mk(idA)], ev(idA, 'm1', 'inbound', t1), tab: t).needsReload,
-            isTrue);
-        expect(run([mk(idA)], ev(idA, 'm1', 'outbound', t1), tab: t).needsReload,
-            isFalse);
+        expect(
+          run([mk(idA)], ev(idA, 'm1', 'inbound', t1), tab: t).needsReload,
+          isTrue,
+        );
+        expect(
+          run([mk(idA)], ev(idA, 'm1', 'outbound', t1), tab: t).needsReload,
+          isFalse,
+        );
       }
     });
     test('Todos/Asignados/Problemas + entrante: sin recarga', () {
       for (final t in [ChatTab.all, ChatTab.assigned, ChatTab.issues]) {
-        expect(run([mk(idA)], ev(idA, 'm1', 'inbound', t1), tab: t).needsReload,
-            isFalse);
+        expect(
+          run([mk(idA)], ev(idA, 'm1', 'inbound', t1), tab: t).needsReload,
+          isFalse,
+        );
       }
     });
     test('filtros avanzados o búsqueda: recarga', () {
@@ -302,6 +314,121 @@ void realtimePatchTests() {
           [
             {'message_id': 'm1', 'status': 'sent'},
           ],
+        ),
+        isNull,
+      );
+    });
+  });
+
+  group('applyUpdatesToChats', () {
+    Message? p(Object? o) {
+      final m = o as Map<String, dynamic>;
+      return Message(
+        id: (m['message_id'] ?? m['websocket_id']) as String,
+        messageId: m['message_id'] as String?,
+        websocketId: m['websocket_id'] as String?,
+        date: t0,
+        type: (m['type'] as String?) ?? 'image',
+        text: m['text'] as String?,
+        status: m['status'] as String?,
+      );
+    }
+
+    test('actualiza preview sin tocar orden ni fecha de orden', () {
+      final items = [mk(idB, mid: 'x'), mk(idA, mid: 'm1')];
+      final r = applyUpdatesToChats(items, [
+        {'message_id': 'm1', 'type': 'image', 'text': 'foto'},
+      ], parse: p)!;
+      expect(r.map((c) => c.id), [idB, idA]);
+      expect(r[1].lastMessageAt, items[1].lastMessageAt);
+      expect(r[1].lastMessage!.type, 'image');
+      expect(r[1].lastMessage!.body, 'foto');
+      expect(r[1].lastMessage!.date, items[1].lastMessage!.date);
+      expect(r[1].unreadCount, 0);
+    });
+    test('no retrocede ack', () {
+      final items = [
+        Chat(
+          id: idA,
+          phone: '1',
+          lastMessage: const ChatLastMessage(ack: 'read', messageId: 'm1'),
+        ),
+      ];
+      final r = applyUpdatesToChats(items, [
+        {'message_id': 'm1', 'status': 'sent', 'text': 'n'},
+      ], parse: p)!;
+      expect(r.first.lastMessage!.ack, 'read');
+    });
+    test('casa por websocketId', () {
+      final items = [
+        Chat(
+          id: idA,
+          phone: '1',
+          lastMessage: const ChatLastMessage(websocketId: 'ws1', type: 'text'),
+        ),
+      ];
+      final r = applyUpdatesToChats(items, [
+        {'websocket_id': 'ws1', 'type': 'image'},
+      ], parse: p)!;
+      expect(r.first.lastMessage!.type, 'image');
+    });
+    test('sin message_id ni websocket_id: null', () {
+      expect(
+        applyUpdatesToChats(
+          [mk(idA, mid: 'm1')],
+          [
+            {'type': 'image'},
+          ],
+          parse: p,
+        ),
+        isNull,
+      );
+    });
+    test('mensaje que no es el último: null', () {
+      expect(
+        applyUpdatesToChats(
+          [mk(idA, mid: 'm1')],
+          [
+            {'message_id': 'otro', 'type': 'image'},
+          ],
+          parse: p,
+        ),
+        isNull,
+      );
+    });
+    test('doc igual: null', () {
+      final items = [
+        Chat(
+          id: idA,
+          phone: '1',
+          lastMessage: const ChatLastMessage(
+            ack: 'sent',
+            type: 'image',
+            body: 'foto',
+            messageId: 'm1',
+          ),
+        ),
+      ];
+      expect(
+        applyUpdatesToChats(items, [
+          {
+            'message_id': 'm1',
+            'type': 'image',
+            'text': 'foto',
+            'status': 'sent',
+          },
+        ], parse: p),
+        isNull,
+      );
+    });
+    test('parse null: ignorado', () {
+      expect(
+        applyUpdatesToChats(
+          [mk(idA, mid: 'm1')],
+          [
+            {'message_id': 'm1', 'type': 'image'},
+          ],
+          parse: (_) => null,
         ),
         isNull,
       );
