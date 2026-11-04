@@ -1,5 +1,9 @@
 # PartsFlow Mobile
 
+## Versionado
+
+La versión sigue el esquema `X.Y.Z+N`: X = módulo nuevo, Y = funcionalidad en un módulo existente, Z = fix. El build number `+N` siempre sube. El detalle y las reglas están en [VERSIONING.md](VERSIONING.md).
+
 ## Instalación del entorno Android en Arch Linux
 
 ### 1. Dependencias base
