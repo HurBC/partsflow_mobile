@@ -23,6 +23,7 @@ import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.da
 import 'package:partsflow_mobile/features/chat/presentation/utils/timeline.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_actions_sheet.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_client_sheets.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_reminders_sheet.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_common.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_composer.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_motion.dart';
@@ -138,7 +139,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
       case ChatAction.issues:
         return showClientIssuesSheet(context, s.chat);
       case ChatAction.reminder:
-        return showClientReminderSheet(context, s.chat);
+        return showClientRemindersSheet(context, s.chat);
       case ChatAction.copyPhone:
         return _copyPhone(s.chat.phone);
       default:

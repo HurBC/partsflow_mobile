@@ -4,6 +4,7 @@ import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/chat/domain/cancel_signal.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_extras.dart';
+import 'package:partsflow_mobile/features/chat/domain/entities/reminder.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_query.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message_template.dart';
@@ -106,5 +107,19 @@ abstract class ChatRepository {
     required String unit,
     required int time,
     required String comment,
+  });
+
+  /// Recordatorios pendientes (no resueltos) del chat.
+  Future<Result<List<Reminder>>> pendingReminders(String chatId);
+
+  Future<Result<bool>> resolveReminder(String id);
+
+  /// Reprograma [reminder] para dentro de [minutes]. SAPI solo extiende +5 min
+  /// (`extend-reminder` ignora el body), así que se crea uno nuevo con el mismo
+  /// texto y se resuelve el original.
+  Future<Result<bool>> extendReminder({
+    required Reminder reminder,
+    required String userId,
+    required int minutes,
   });
 }
