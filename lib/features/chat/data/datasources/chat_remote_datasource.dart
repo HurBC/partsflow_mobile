@@ -160,7 +160,11 @@ class ChatRemoteDataSource {
       (await _dio.get<Object?>(
         'chat/files/${_kindPath(kind)}/download/',
         queryParameters: {'file_id': id},
-        options: Options(receiveTimeout: _long),
+        options: Options(
+          receiveTimeout: _long,
+          // Texto plano: evita parsear JSON de varios MB en el hilo de UI.
+          responseType: ResponseType.plain,
+        ),
       )).data;
 
   Future<Object?> quickAnswers() async => (await _dio.get<Object?>(

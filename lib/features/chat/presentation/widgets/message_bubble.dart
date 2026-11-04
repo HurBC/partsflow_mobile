@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../utils/image_sizing.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
@@ -201,7 +202,12 @@ class MessageBubble extends StatelessWidget {
         else if (message.localPath != null)
           LocalMediaView(message: message, color: fg)
         else if (isImage)
-          _ImageContent(url: message.mediaUrl!, bg: pf.divider)
+          _ImageContent(
+            url: message.mediaUrl!,
+            cacheKey:
+                'msg-img-${message.mediaId ?? message.messageId ?? message.id}',
+            bg: pf.divider,
+          )
         else
           switch (message.type) {
             'audio' || 'ptt' || 'voice'
@@ -608,9 +614,14 @@ class _TypeChip extends StatelessWidget {
 }
 
 class _ImageContent extends StatelessWidget {
-  const _ImageContent({required this.url, required this.bg});
+  const _ImageContent({
+    required this.url,
+    required this.cacheKey,
+    required this.bg,
+  });
 
   final String url;
+  final String cacheKey;
   final Color bg;
 
   @override
@@ -636,10 +647,11 @@ class _ImageContent extends StatelessWidget {
             children: [
               Center(
                 child: InteractiveViewer(
-                  child: Image.network(
-                    url,
-                    cacheWidth: kMaxFullscreenDecodePx,
-                    errorBuilder: (_, _, _) => const Icon(
+                  child: CachedNetworkImage(
+                    imageUrl: url,
+                    cacheKey: cacheKey,
+                    memCacheWidth: kMaxFullscreenDecodePx,
+                    errorWidget: (_, _, _) => const Icon(
                       Icons.broken_image_outlined,
                       color: Colors.white70,
                       size: 48,
@@ -664,15 +676,15 @@ class _ImageContent extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: Image.network(
-          url,
+        child: CachedNetworkImage(
+          imageUrl: url,
+          cacheKey: cacheKey,
           width: 200,
           height: 150,
-          cacheWidth: decodePx(context, 200),
+          memCacheWidth: decodePx(context, 200),
           fit: BoxFit.cover,
-          loadingBuilder: (_, child, progress) =>
-              progress == null ? child : placeholder(Icons.image_outlined),
-          errorBuilder: (_, _, _) => placeholder(Icons.broken_image_outlined),
+          placeholder: (_, _) => placeholder(Icons.image_outlined),
+          errorWidget: (_, _, _) => placeholder(Icons.broken_image_outlined),
         ),
       ),
     );

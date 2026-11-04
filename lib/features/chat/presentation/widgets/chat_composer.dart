@@ -261,7 +261,7 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       initialCaption: caption,
     );
     if (res == null || !mounted) return false;
-    unawaited(_thread.sendAttachments(res.files, res.caption));
+    unawaited(_sendAndClean(res.files, res.caption));
     return true;
   }
 
@@ -435,6 +435,23 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
     }
   }
 
+  /// Envía y, si la subida terminó bien, borra los temporales propios
+  /// (pf_rec_*, pegado-*, pf_qa_*). Si el mensaje quedó en error se conservan
+  /// para poder reintentar (el purgado por antigüedad los limpia después).
+  Future<void> _sendAndClean(
+    List<OutgoingAttachment> files,
+    String caption,
+  ) async {
+    try {
+      final sent = await _thread.sendAttachments(files, caption);
+      for (final p in ownTempsToDelete(files.map((f) => f.path), sent)) {
+        await deleteOwnTemp(p);
+      }
+    } catch (_) {
+      // Ante la duda se conserva el archivo.
+    }
+  }
+
   Future<void> _sendRecording() async {
     if (_stopping) return;
     _stopping = true;
@@ -467,7 +484,7 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       final name =
           'audio-${DateTime.now().millisecondsSinceEpoch}.${_recFormat.ext}';
       unawaited(
-        _thread.sendAttachments([
+        _sendAndClean([
           OutgoingAttachment(
             path: path,
             name: name,
@@ -944,3 +961,11 @@ const _wavFormat = _RecFormat(
   'wav',
   'audio/wav',
 );
+
+/// Paths a borrar tras un envío: solo los confirmados como enviados (nunca los
+/// que fallaron, excedieron el lote o se perdieron al salir del chat).
+@visibleForTesting
+List<String> ownTempsToDelete(Iterable<String> requested, Set<String> sent) => [
+  for (final p in requested.toSet())
+    if (sent.contains(p)) p,
+];

@@ -479,14 +479,16 @@ class ChatThread extends _$ChatThread {
   }
 
   /// Un mensaje por archivo (la leyenda solo en el primero). Hasta 3 subidas
-  /// en paralelo; los envíos salen en orden.
-  Future<void> sendAttachments(
+  /// en paralelo; los envíos salen en orden. Devuelve los paths locales de los
+  /// archivos enviados con éxito (los demás se conservan para reintentar).
+  Future<Set<String>> sendAttachments(
     List<OutgoingAttachment> files,
     String caption,
   ) async {
-    if (files.isEmpty) return;
+    final sent = <String>{};
+    if (files.isEmpty) return sent;
     final me = await _me();
-    if (!ref.mounted) return;
+    if (!ref.mounted) return sent;
     final reply = _takeReply();
     final ids = <String>[];
     final locals = <Message>[];
@@ -523,10 +525,11 @@ class ChatThread extends _$ChatThread {
     for (final id in ids) {
       _ensureUploaded(id);
     }
-    for (final id in ids) {
-      if (!ref.mounted) return;
-      await _deliver(id, me);
+    for (var i = 0; i < ids.length; i++) {
+      if (!ref.mounted) return sent;
+      if (await _deliver(ids[i], me)) sent.add(files[i].path);
     }
+    return sent;
   }
 
   /// Reintenta un mensaje local que falló.
@@ -607,11 +610,12 @@ class ChatThread extends _$ChatThread {
     };
   }
 
-  Future<void> _deliver(String localId, ApiUser? me) async {
+  /// true si el mensaje se envió y se confirmó.
+  Future<bool> _deliver(String localId, ApiUser? me) async {
     final job = _jobs[localId];
-    if (job == null) return;
+    if (job == null) return false;
     String? error = await _ensureUploaded(localId);
-    if (!ref.mounted) return;
+    if (!ref.mounted) return false;
     if (error == null) {
       final wasAutomatic = state.chat.client?.operationMode == 'automatic';
       final isAudio = job.file?.kind == AttachmentKind.audio;
@@ -628,7 +632,7 @@ class ChatThread extends _$ChatThread {
                 ? null
                 : (isAudio ? '' : job.file!.name),
           );
-      if (!ref.mounted) return;
+      if (!ref.mounted) return false;
       switch (r) {
         case Ok(:final value):
           switch (value.status) {
@@ -666,15 +670,16 @@ class ChatThread extends _$ChatThread {
         (m) =>
             m.copyWith(status: 'error', errorText: error, clearProgress: true),
       );
-      return;
+      return false;
     }
     await _loadFirstPage();
-    if (!ref.mounted) return;
+    if (!ref.mounted) return false;
     _jobs.remove(localId);
     state = state.copyWith(
       pending: state.pending.where((m) => m.id != localId).toList(),
     );
     ref.read(chatListControllerProvider.notifier).poll();
+    return true;
   }
 
   /// Envía una plantilla (sin mensaje optimista: se ve al recargar).
