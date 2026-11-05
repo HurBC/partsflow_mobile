@@ -248,8 +248,14 @@ class ChatThread extends _$ChatThread {
     switch (r) {
       case Ok(:final value):
         _reloadGate.markSuccess();
+        final merged = absorbPending(
+          mergeMessages(state.messages, value),
+          state.pending,
+        );
+        _dropJobs(merged.absorbed);
         state = state.copyWith(
-          messages: mergeMessages(state.messages, value),
+          messages: merged.messages,
+          pending: merged.pending,
           status: ListStatus.data,
           historyLoaded: true,
           // Si la primera página vino llena, puede haber más atrás.
@@ -338,11 +344,27 @@ class ChatThread extends _$ChatThread {
     return p == null ? null : p == phoneDigits(chat.phone);
   }
 
+  /// Asigna [messages] y, en la MISMA escritura, quita los pendientes cuyo real
+  /// ya llegó (mismo id: `websocket_id` = id local): nunca hay dos burbujas.
+  void _setMessages(List<Message> messages) {
+    final a = absorbPending(messages, state.pending);
+    _dropJobs(a.absorbed);
+    state = state.copyWith(messages: a.messages, pending: a.pending);
+  }
+
+  /// Pendientes absorbidos por su real (p. ej. un POST con timeout que el
+  /// servidor sí guardó): se descarta su job y se cede su turno de la cola.
+  void _dropJobs(Set<String> ids) {
+    for (final id in ids) {
+      _jobs.remove(id)?.turn.release();
+      _uploads.remove(id);
+    }
+  }
+
   /// Aplica los mensajes del evento como parche local. Devuelve false si hay
   /// que recargar (fallback): chat no cargado aún, ítem sin identificador de
-  /// mensaje usable o no mapeable, o eco de un mensaje propio con envíos en
-  /// curso (el vínculo local<->servidor no es fiable: el evento no trae el id
-  /// local y la recarga + messageId reconcilia).
+  /// mensaje usable o no mapeable. El eco de un envío propio trae el id local
+  /// como `websocket_id` (= id del real) y reemplaza a su pendiente.
   bool _patchNewMessages(
     List<Map<String, dynamic>> mine,
     List<Map<String, dynamic>> all,
@@ -350,7 +372,6 @@ class ChatThread extends _$ChatThread {
     if (state.status != ListStatus.data) return false;
     // Ítems de dudosa pertenencia (sin identificador de chat) => recargar.
     if (all.any((i) => _isForThisChat(i, state.chat) == null)) return false;
-    final hasPending = state.pending.any((m) => m.status != 'error');
     final parsed = <Message>[];
     for (final i in mine) {
       if (nonEmpty(asStr(i['message_id'])) == null &&
@@ -359,11 +380,10 @@ class ChatThread extends _$ChatThread {
       }
       final m = messageFromJson(i);
       if (m == null) return false;
-      if (hasPending && m.isOutbound) return false;
       parsed.add(m);
     }
     final next = applyNewMessages(state.messages, parsed);
-    if (next != null) state = state.copyWith(messages: next);
+    if (next != null) _setMessages(next);
     return true;
   }
 
@@ -386,7 +406,7 @@ class ChatThread extends _$ChatThread {
       parsed.add(m);
     }
     final next = applyMessageUpdates(state.messages, parsed);
-    if (next != null) state = state.copyWith(messages: next);
+    if (next != null) _setMessages(next);
     return true;
   }
 
@@ -561,11 +581,27 @@ class ChatThread extends _$ChatThread {
   // ---- Envío -------------------------------------------------------------
 
   static const maxUploadBytes = 16 * 1024 * 1024;
+  @visibleForTesting
+  static Duration uploadStallTimeout = const Duration(seconds: 30);
+  @visibleForTesting
+  static Duration uploadStallCheck = const Duration(seconds: 5);
   static const maxBatch = 10;
 
   final _jobs = <String, _SendJob>{};
   final _uploads = <String, Future<String?>>{};
   final _gate = _Gate(3);
+
+  /// Cola FIFO de envíos (un `send_message` en vuelo por chat, en el orden de
+  /// los toques). Cada mensaje reserva su turno al crearse; las subidas siguen
+  /// en paralelo y solo el POST final espera su turno.
+  Future<void> _sendTail = Future.value();
+
+  _SendTurn _reserveTurn() {
+    final done = Completer<void>();
+    final turn = _SendTurn(_sendTail, done);
+    _sendTail = done.future;
+    return turn;
+  }
 
   void setReply(Message? m) {
     state = m == null
@@ -616,6 +652,7 @@ class ChatThread extends _$ChatThread {
       text: body,
       quoteId: reply.id,
       quoteBody: reply.body,
+      turn: _reserveTurn(),
     );
     state = state.copyWith(pending: [...state.pending, local]);
     await _deliver(local.id, me);
@@ -660,6 +697,7 @@ class ChatThread extends _$ChatThread {
         file: f,
         quoteId: i == 0 ? reply.id : null,
         quoteBody: i == 0 ? reply.body : null,
+        turn: _reserveTurn(),
       );
       locals.add(local);
       ids.add(local.id);
@@ -680,6 +718,10 @@ class ChatThread extends _$ChatThread {
     if (!state.pending.any((m) => m.id == localId)) return;
     final me = await _me();
     if (!ref.mounted) return;
+    final job = _jobs[localId];
+    if (job == null) return;
+    // El reintento se encola al final.
+    job.turn = _reserveTurn();
     _replacePending(
       localId,
       (m) => m.copyWith(status: 'temp', clearError: true),
@@ -688,7 +730,7 @@ class ChatThread extends _$ChatThread {
   }
 
   void discardPending(String localId) {
-    _jobs.remove(localId);
+    _jobs.remove(localId)?.turn.release();
     _uploads.remove(localId);
     state = state.copyWith(
       pending: state.pending.where((m) => m.id != localId).toList(),
@@ -709,17 +751,42 @@ class ChatThread extends _$ChatThread {
     }
     return _uploads[id] ??= _gate.run(() async {
       if (!ref.mounted) return 'cancelado';
-      final r = await ref
-          .read(chatRepositoryProvider)
-          .uploadFile(
-            chat: state.chat,
-            file: job.file!,
-            onProgress: (p) {
-              if (!ref.mounted) return;
-              _replacePending(id, (m) => m.copyWith(uploadProgress: p));
-            },
-          );
+      // Guardia de estancamiento: sin progreso durante [uploadStallTimeout] el
+      // mensaje falla (error visible) y cede su turno de la cola; una subida
+      // que avanza no tiene tope.
+      var lastProgress = DateTime.now();
+      var abandoned = false;
+      final stalled = Completer<void>();
+      final watch = Timer.periodic(uploadStallCheck, (_) {
+        if (DateTime.now().difference(lastProgress) > uploadStallTimeout &&
+            !stalled.isCompleted) {
+          abandoned = true;
+          stalled.complete();
+        }
+      });
+      final Result<UploadedFile>? r;
+      try {
+        r = await Future.any<Result<UploadedFile>?>([
+          ref
+              .read(chatRepositoryProvider)
+              .uploadFile(
+                chat: state.chat,
+                file: job.file!,
+                onProgress: (p) {
+                  lastProgress = DateTime.now();
+                  if (!ref.mounted || abandoned) return;
+                  _replacePending(id, (m) => m.copyWith(uploadProgress: p));
+                },
+              ),
+          stalled.future.then((_) => null),
+        ]);
+      } finally {
+        watch.cancel();
+      }
       _uploads.remove(id);
+      if (r == null) {
+        return 'La subida no avanza. Reintenta.';
+      }
       if (!ref.mounted) return 'cancelado';
       switch (r) {
         case Ok(:final value):
@@ -757,15 +824,34 @@ class ChatThread extends _$ChatThread {
   Future<bool> _deliver(String localId, ApiUser? me) async {
     final job = _jobs[localId];
     if (job == null) return false;
+    final turn = job.turn;
+    try {
+      return await _deliverInTurn(localId, me, job, turn);
+    } finally {
+      turn.release();
+    }
+  }
+
+  Future<bool> _deliverInTurn(
+    String localId,
+    ApiUser? me,
+    _SendJob job,
+    _SendTurn turn,
+  ) async {
     String? error = await _ensureUploaded(localId);
     if (!ref.mounted) return false;
-    // Para enlazar la onda del audio propio con el mensaje real que aparezca.
+    // Solo el POST espera su turno (orden de los toques); un fallo no bloquea.
+    if (error == null) await turn.wait;
+    if (!ref.mounted || !identical(_jobs[localId], job)) return false;
+    // Fallback (respuesta sin documento): enlazar la onda del audio propio con
+    // el mensaje real que aparezca.
     final knownIds = job.file?.kind == AttachmentKind.audio
         ? {for (final m in state.messages) m.id}
         : null;
     final localDate = knownIds == null
         ? null
         : state.pending.where((m) => m.id == localId).firstOrNull?.date;
+    Message? created;
     if (error == null) {
       final wasAutomatic = state.chat.client?.operationMode == 'automatic';
       final isAudio = job.file?.kind == AttachmentKind.audio;
@@ -781,12 +867,14 @@ class ChatThread extends _$ChatThread {
             mediaFileName: job.file == null
                 ? null
                 : (isAudio ? '' : job.file!.name),
+            websocketId: localId,
           );
       if (!ref.mounted) return false;
       switch (r) {
         case Ok(:final value):
           switch (value.status) {
             case SendStatus.sent:
+              created = value.created;
               if (wasAutomatic && state.chat.client != null) {
                 // El envío pasó el chat a manual (Julia en pausa).
                 _setChat(
@@ -828,17 +916,47 @@ class ChatThread extends _$ChatThread {
       );
       return false;
     }
-    await _loadFirstPage();
-    if (!ref.mounted) return false;
-    if (knownIds != null && localDate != null) {
-      _linkWaveform(job.file!.path, knownIds, localDate, me);
+    // El turno se libera ya: el siguiente mensaje no espera recargas.
+    turn.release();
+    if (created != null) {
+      // Camino normal: el POST devolvió el real (id = id local). Un solo
+      // `state=` quita el pendiente e inserta el real (o lo deja, si el
+      // realtime ya lo trajo); la recarga posterior solo refresca.
+      final path = job.file?.path;
+      if (path != null && job.file?.kind == AttachmentKind.audio) {
+        ref.read(audioWaveformStoreProvider).link(path, created.id);
+      }
+      _commitSent(localId, created);
+      _jobs.remove(localId);
+      _signalReload();
+    } else {
+      // Respuesta sin documento: camino por recarga/realtime. El real (si el
+      // servidor persistió el websocket_id) reemplaza al pendiente en el
+      // propio merge; si no, se quita el pendiente al terminar la recarga.
+      await _loadFirstPage();
+      if (!ref.mounted) return false;
+      if (knownIds != null && localDate != null) {
+        _linkWaveform(job.file!.path, knownIds, localDate, me);
+      }
+      _jobs.remove(localId);
+      state = state.copyWith(
+        pending: state.pending.where((m) => m.id != localId).toList(),
+      );
     }
-    _jobs.remove(localId);
-    state = state.copyWith(
-      pending: state.pending.where((m) => m.id != localId).toList(),
-    );
     ref.read(chatListControllerProvider.notifier).poll();
     return true;
+  }
+
+  /// Inserta el real [created] y quita el pendiente [localId] en un solo
+  /// `state=` (sin ventana con dos burbujas).
+  void _commitSent(String localId, Message created) {
+    final next = applyNewMessages(state.messages, [created]) ?? state.messages;
+    final a = absorbPending(next, state.pending);
+    _dropJobs(a.absorbed);
+    state = state.copyWith(
+      messages: a.messages,
+      pending: a.pending.where((m) => m.id != localId).toList(),
+    );
   }
 
   /// El pendiente (`local-…`) y el mensaje real no comparten id: se enlaza al
@@ -1141,8 +1259,29 @@ String? pickWaveformCandidate(
   return best?.id;
 }
 
+/// Turno de un envío en la cola FIFO: [wait] completa cuando terminó el
+/// anterior; [release] cede el turno al siguiente (idempotente).
+class _SendTurn {
+  _SendTurn(this.wait, this._done);
+
+  final Future<void> wait;
+  final Completer<void> _done;
+
+  void release() {
+    if (!_done.isCompleted) _done.complete();
+  }
+}
+
 class _SendJob {
-  _SendJob({required this.text, this.file, this.quoteId, this.quoteBody});
+  _SendJob({
+    required this.text,
+    required this.turn,
+    this.file,
+    this.quoteId,
+    this.quoteBody,
+  });
+
+  _SendTurn turn;
 
   final String text;
   final OutgoingAttachment? file;

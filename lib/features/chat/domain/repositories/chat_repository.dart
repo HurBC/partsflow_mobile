@@ -43,6 +43,10 @@ abstract class ChatRepository {
     String? quoteBody,
     String? mediaFileId,
     String? mediaFileName,
+
+    /// id local del mensaje optimista: el servidor lo persiste como
+    /// `websocket_id` y lo devuelve en el POST y en el evento realtime.
+    String? websocketId,
   });
 
   Future<Result<UploadedFile>> uploadFile({

@@ -1,4 +1,5 @@
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
+import 'package:partsflow_mobile/features/chat/domain/logic/messages.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/thread_note.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/day_utils.dart';
 
@@ -96,11 +97,33 @@ List<TimelineEntry> buildTimeline(
   List<Message> pending,
   List<ThreadNote> notes,
 ) {
-  final all = <({DateTime date, TimelineEntry entry})>[
-    for (final m in messages) (date: m.date, entry: MsgEntry(m)),
-    for (final m in pending) (date: m.date, entry: MsgEntry(m)),
+  // Reales y notas por fecha (estable; empates de mensajes propios por su
+  // orden de envío); los pendientes siempre después de todos, en su secuencia
+  // local. Un pendiente cuyo id ya es el de un real presente (el real enviado
+  // con `websocket_id` = id local) no se muestra: nunca dos burbujas.
+  final realIds = {
+    for (final m in messages) ...[m.id, ?m.websocketId],
+  };
+  final base = <({DateTime date, TimelineEntry entry})>[
+    for (final m in sortedMessages(messages))
+      (date: m.date, entry: MsgEntry(m)),
     for (final n in notes) (date: n.date, entry: NoteEntry(n)),
-  ]..sort((a, b) => a.date.compareTo(b.date));
+  ];
+  // Mezcla estable de notas entre mensajes (ambas listas ya ordenadas).
+  final merged = <({DateTime date, TimelineEntry entry})>[];
+  final idx = [for (var i = 0; i < base.length; i++) i];
+  idx.sort((x, y) {
+    final c = base[x].date.compareTo(base[y].date);
+    return c != 0 ? c : x.compareTo(y);
+  });
+  for (final i in idx) {
+    merged.add(base[i]);
+  }
+  final all = [
+    ...merged,
+    for (final m in pending)
+      if (!realIds.contains(m.id)) (date: m.date, entry: MsgEntry(m)),
+  ];
 
   final asc = <TimelineEntry>[];
   DateTime? lastDay;

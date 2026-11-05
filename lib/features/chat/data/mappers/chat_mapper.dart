@@ -99,6 +99,17 @@ Chat? chatFromJson(Object? json) {
   }
 }
 
+/// `status_code` de Wali -> status (cuando `status` viene vacío): 1 pendiente,
+/// 2 enviado, 3 entregado, 4 leído, 5 fallido.
+String? statusFromCode(Object? code) => switch (asInt(code)) {
+  1 => 'pending',
+  2 => 'sent',
+  3 => 'delivered',
+  4 => 'read',
+  5 => 'error',
+  _ => null,
+};
+
 Message? messageFromJson(Object? json) {
   try {
     final m = asMap(json);
@@ -159,7 +170,12 @@ Message? messageFromJson(Object? json) {
 
     // El evento realtime no trae `id`: message_id/websocket_id son únicos por
     // mensaje; el sintético (fecha+tipo) es último recurso y puede colisionar.
+    // Un mensaje enviado desde la app lleva su id local como `websocket_id`:
+    // el real conserva ese id (misma key/animación que el pendiente y vínculo
+    // exacto pendiente<->real, sin heurísticas).
+    final ws = nonEmpty(asStr(m['websocket_id']));
     final id =
+        (ws != null && ws.startsWith('local-') ? ws : null) ??
         nonEmpty(asStr(m['id'])) ??
         nonEmpty(asStr(m['message_id'])) ??
         nonEmpty(asStr(m['websocket_id'])) ??
@@ -171,7 +187,7 @@ Message? messageFromJson(Object? json) {
       type: type,
       flow: asStr(m['flow']),
       text: text,
-      status: asStr(m['status']),
+      status: nonEmpty(asStr(m['status'])) ?? statusFromCode(m['status_code']),
       reference: asStr(m['reference']),
       senderName: nonEmpty(asStr(m['sender_name'])),
       agent: nonEmpty(asStr(m['agent'])),
@@ -191,6 +207,7 @@ Message? messageFromJson(Object? json) {
       mediaId: mediaId,
       mediaMime: mediaMime,
       websocketId: nonEmpty(asStr(m['websocket_id'])),
+      serverId: nonEmpty(asStr(m['id'])),
       errorCode: asInt(m['error_code']),
       isEdited:
           (asBool(m['is_edited']) ?? false) || asStr(m['status']) == 'edited',

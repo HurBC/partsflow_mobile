@@ -51,6 +51,53 @@ Message _reconcile(Message old, Message incoming) {
   return next;
 }
 
+/// (µs, seq) de un id local (`local-<µs>-<seq>`), o null si no lo es.
+(int, int)? _localOrder(String id) {
+  if (!id.startsWith('local-')) return null;
+  final parts = id.split('-');
+  if (parts.length != 3) return null;
+  final us = int.tryParse(parts[1]);
+  final seq = int.tryParse(parts[2]);
+  return us == null || seq == null ? null : (us, seq);
+}
+
+/// Orden del hilo: por fecha y, a igual fecha (el servidor da segundos), los
+/// ids de documento del servidor si ambos los tienen, o el orden de envío
+/// local de los propios; si no, empatan (el llamador
+/// usa un sort estable y conserva el orden previo/de llegada).
+int compareMessages(Message a, Message b) {
+  final c = a.date.compareTo(b.date);
+  if (c != 0) return c;
+  // Ambos con id de documento (ObjectId, 24 hex, creciente por inserción; el
+  // entrante y el saliente los inserta Wali en la misma colección).
+  final sa = a.serverId;
+  final sb = b.serverId;
+  if (sa != null && sb != null && sa != sb && _isOid(sa) && _isOid(sb)) {
+    return sa.compareTo(sb);
+  }
+  final la = _localOrder(a.id);
+  final lb = _localOrder(b.id);
+  if (la != null && lb != null) {
+    final u = la.$1.compareTo(lb.$1);
+    return u != 0 ? u : la.$2.compareTo(lb.$2);
+  }
+  return 0;
+}
+
+final _oid = RegExp(r'^[0-9a-fA-F]{24}$');
+bool _isOid(String s) => _oid.hasMatch(s);
+
+/// Sort estable (Dart no lo garantiza) con [compareMessages].
+List<Message> sortedMessages(Iterable<Message> messages) {
+  final l = messages.toList();
+  final idx = [for (var i = 0; i < l.length; i++) i];
+  idx.sort((x, y) {
+    final c = compareMessages(l[x], l[y]);
+    return c != 0 ? c : x.compareTo(y);
+  });
+  return [for (final i in idx) l[i]];
+}
+
 /// Une dos listas de mensajes por id (los de [b] pisan a los de [a]) y ordena
 /// por fecha ascendente. Un mensaje de [b] con el mismo `messageId` que uno de
 /// [a] (p. ej. el parche realtime y el historial con id real) reemplaza a ese,
@@ -81,8 +128,7 @@ List<Message> mergeMessages(List<Message> a, List<Message> b) {
     byId[next.id] = next;
     if (mid != null) idByMessageId[mid] = next.id;
   }
-  final out = byId.values.toList()..sort((x, y) => x.date.compareTo(y.date));
-  return out;
+  return sortedMessages(byId.values);
 }
 
 /// Aplica actualizaciones de estado (`items`: mapas con `message_id`,
@@ -166,7 +212,7 @@ List<Message>? applyNewMessages(List<Message> current, List<Message> incoming) {
       continue;
     }
     var pos = out.length;
-    while (pos > 0 && out[pos - 1].date.isAfter(m.date)) {
+    while (pos > 0 && compareMessages(out[pos - 1], m) > 0) {
       pos--;
     }
     out.insert(pos, m);
@@ -185,6 +231,46 @@ List<Message>? applyNewMessages(List<Message> current, List<Message> incoming) {
     }
   }
   return changed ? out : null;
+}
+
+/// Quita de [pending] los mensajes locales que ya tienen su real en
+/// [messages] (mismo id: el real enviado con `websocket_id` = id local lo
+/// conserva) y le traslada el archivo local si el real no lo trae. Devuelve
+/// las listas finales (las mismas instancias si nada cambió) para asignarlas
+/// al estado en UNA sola escritura.
+({List<Message> messages, List<Message> pending, Set<String> absorbed})
+absorbPending(List<Message> messages, List<Message> pending) {
+  if (pending.isEmpty) {
+    return (messages: messages, pending: pending, absorbed: const {});
+  }
+  // Por id y por websocket_id (un real que entró sin él y luego lo recibe).
+  final index = <String, int>{
+    for (var i = 0; i < messages.length; i++) ...{
+      messages[i].id: i,
+      if (messages[i].websocketId != null) messages[i].websocketId!: i,
+    },
+  };
+  final absorbed = <String>{};
+  List<Message>? outMessages;
+  final keep = <Message>[];
+  for (final p in pending) {
+    final at = index[p.id];
+    if (at == null) {
+      keep.add(p);
+      continue;
+    }
+    absorbed.add(p.id);
+    final real = (outMessages ?? messages)[at];
+    if (real.localPath == null && p.localPath != null) {
+      (outMessages ??= [...messages])[at] = real.copyWith(
+        localPath: p.localPath,
+      );
+    }
+  }
+  if (keep.length == pending.length) {
+    return (messages: messages, pending: pending, absorbed: const {});
+  }
+  return (messages: outMessages ?? messages, pending: keep, absorbed: absorbed);
 }
 
 /// Aplica documentos completos actualizados (evento `chat_list_message_update`,
@@ -219,7 +305,7 @@ List<Message>? applyMessageUpdates(
     }
     if (at < 0) {
       var pos = out.length;
-      while (pos > 0 && out[pos - 1].date.isAfter(m.date)) {
+      while (pos > 0 && compareMessages(out[pos - 1], m) > 0) {
         pos--;
       }
       out.insert(pos, m);
