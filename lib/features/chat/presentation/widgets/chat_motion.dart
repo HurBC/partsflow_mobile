@@ -1,4 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:partsflow_mobile/core/theme/pf_motion.dart';
+import 'package:partsflow_mobile/core/ui/pf_haptics.dart';
 
 /// Cómo entra un mensaje que aparece después de cargado el hilo.
 enum MessageEntranceKind {
@@ -31,6 +35,8 @@ class MessageEntrance extends StatefulWidget {
 class _MessageEntranceState extends State<MessageEntrance>
     with SingleTickerProviderStateMixin {
   AnimationController? _c;
+  CurvedAnimation? _pop;
+  CurvedAnimation? _fade;
   late final bool _own = widget.kind == MessageEntranceKind.own;
 
   @override
@@ -39,8 +45,21 @@ class _MessageEntranceState extends State<MessageEntrance>
     if (widget.animate) {
       _c = AnimationController(
         vsync: this,
-        duration: Duration(milliseconds: _own ? 240 : 220),
+        duration: _own
+            ? PfMotion.bubbleEnter
+            : const Duration(milliseconds: 220),
       );
+      final c = _c!;
+      if (_own) {
+        // Rebote desde abajo-derecha + fundido corto (sin pasar de opacidad 1).
+        _pop = CurvedAnimation(parent: c, curve: PfMotion.overshoot);
+        _fade = CurvedAnimation(
+          parent: c,
+          curve: const Interval(0, 0.5, curve: Curves.easeOut),
+        );
+      } else {
+        _pop = CurvedAnimation(parent: c, curve: Curves.easeOutCubic);
+      }
     }
   }
 
@@ -58,6 +77,8 @@ class _MessageEntranceState extends State<MessageEntrance>
 
   @override
   void dispose() {
+    _pop?.dispose();
+    _fade?.dispose();
     _c?.dispose();
     super.dispose();
   }
@@ -66,23 +87,93 @@ class _MessageEntranceState extends State<MessageEntrance>
   Widget build(BuildContext context) {
     final c = _c;
     if (c == null) return widget.child;
-    final curve = CurvedAnimation(parent: c, curve: Curves.easeOutCubic);
-    final slide = Tween<Offset>(
-      begin: Offset(0, _own ? 0.3 : 0.12),
-      end: Offset.zero,
-    ).animate(curve);
-    Widget out = SlideTransition(
-      position: slide,
-      child: FadeTransition(opacity: curve, child: widget.child),
-    );
     if (_own) {
-      out = ScaleTransition(
-        scale: Tween<double>(begin: 0.92, end: 1).animate(curve),
-        alignment: Alignment.bottomRight,
-        child: out,
+      final pop = _pop!;
+      final fade = _fade!;
+      // Nace desde abajo-derecha: translate(26,40) + scale .55→1 con rebote.
+      return AnimatedBuilder(
+        animation: c,
+        child: widget.child,
+        builder: (context, child) {
+          final t = pop.value;
+          return Opacity(
+            opacity: fade.value.clamp(0.0, 1.0),
+            child: Transform.translate(
+              offset: Offset(26 * (1 - t), 40 * (1 - t)),
+              child: Transform.scale(
+                scale: 0.55 + 0.45 * t,
+                alignment: Alignment.bottomRight,
+                child: child,
+              ),
+            ),
+          );
+        },
       );
     }
-    return out;
+    final curve = _pop!;
+    return SlideTransition(
+      position: Tween<Offset>(
+        begin: const Offset(0, 0.12),
+        end: Offset.zero,
+      ).animate(curve),
+      child: FadeTransition(opacity: curve, child: widget.child),
+    );
+  }
+}
+
+/// Sacude [child] (~420 ms) cada vez que [error] pasa de false a true y dispara
+/// la háptica de error UNA vez por transición. Montarse ya en error (reabrir
+/// el chat con mensajes fallidos) o reconstruir en error no hace nada.
+class ErrorShake extends StatefulWidget {
+  const ErrorShake({
+    super.key,
+    required this.error,
+    required this.child,
+    this.onError = PfHaptics.error,
+  });
+
+  final bool error;
+  final Widget child;
+  final VoidCallback onError;
+
+  @override
+  State<ErrorShake> createState() => _ErrorShakeState();
+}
+
+class _ErrorShakeState extends State<ErrorShake>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: PfMotion.errorShake,
+  );
+
+  @override
+  void didUpdateWidget(ErrorShake old) {
+    super.didUpdateWidget(old);
+    if (widget.error && !old.error) {
+      widget.onError();
+      if (!MediaQuery.disableAnimationsOf(context)) _c.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      child: widget.child,
+      builder: (context, child) {
+        final t = _c.value;
+        if (t == 0 || t == 1) return child!;
+        final dx = math.sin(t * math.pi * 6) * 8 * (1 - t);
+        return Transform.translate(offset: Offset(dx, 0), child: child);
+      },
+    );
   }
 }
 

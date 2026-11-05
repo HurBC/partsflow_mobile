@@ -5,6 +5,7 @@ import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/send_errors.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_motion.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/message_media.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/message_ticks.dart';
 
@@ -311,6 +312,8 @@ class MessageBubble extends StatelessWidget {
       ],
     );
 
+    final errored = message.hasError && message.isOutbound && !deleted;
+
     Widget decorated(double flash) {
       final color = Color.alphaBlend(
         pf.mint.withValues(alpha: 0.5 * flash),
@@ -321,6 +324,13 @@ class MessageBubble extends StatelessWidget {
         padding: isImage
             ? const EdgeInsets.all(4)
             : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        // El contorno de error se pinta encima: no cambia el tamaño.
+        foregroundDecoration: errored
+            ? BoxDecoration(
+                borderRadius: radius,
+                border: Border.all(color: pf.errIcon, width: 2),
+              )
+            : null,
         decoration: BoxDecoration(
           color: color,
           borderRadius: radius,
@@ -392,7 +402,7 @@ class MessageBubble extends StatelessWidget {
               child: GestureDetector(
                 behavior: HitTestBehavior.deferToChild,
                 onLongPress: onLongPress,
-                child: bubble,
+                child: ErrorShake(error: errored, child: bubble),
               ),
             ),
           ),

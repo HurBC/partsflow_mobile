@@ -22,6 +22,15 @@ abstract class PfMotion {
   static const juliaWorkingEnter = Duration(milliseconds: 300);
   static const juliaWorkingExit = Duration(milliseconds: 200);
 
+  // Texto del chat (composer, burbujas, ticks).
+  static const composerMorph = Duration(milliseconds: 280);
+  static const composerColor = Duration(milliseconds: 200);
+  static const composerTakeoff = Duration(milliseconds: 260);
+  static const bubbleEnter = Duration(milliseconds: 440);
+  static const tickDraw = Duration(milliseconds: 300);
+  static const tickPop = Duration(milliseconds: 320);
+  static const errorShake = Duration(milliseconds: 420);
+
   /// Con "reducir animaciones" solo hay fundido.
   static const reducedFade = Duration(milliseconds: 160);
 

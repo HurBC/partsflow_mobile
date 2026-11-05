@@ -20,6 +20,7 @@ import 'package:partsflow_mobile/features/chat/presentation/providers/chat_threa
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/media_files.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/attachment_preview_page.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/composer_action_button.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/quick_answers_sheet.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/templates_sheet.dart';
 import 'package:path_provider/path_provider.dart';
@@ -53,7 +54,6 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
   final _controller = TextEditingController();
   late final FocusNode _focus = widget.focusNode ?? (_ownFocus = FocusNode());
   FocusNode? _ownFocus;
-  bool _sendPressed = false;
   final _picker = ImagePicker();
   AudioRecorder? _recorder;
   bool _hasText = false;
@@ -96,11 +96,12 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
     PfToast.show(context, text, kind: kind);
   }
 
-  void _submit() {
+  bool _submit() {
     final text = _controller.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty) return false;
     _thread.send(text);
     _controller.clear();
+    return true;
   }
 
   // ---- Menú "+" --------------------------------------------------------------
@@ -531,7 +532,6 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
   @override
   Widget build(BuildContext context) {
     final pf = PfColors.of(context);
-    final primary = Theme.of(context).colorScheme.primary;
     final reduce = MediaQuery.disableAnimationsOf(context);
     Duration motion(int ms) =>
         reduce ? Duration.zero : Duration(milliseconds: ms);
@@ -643,50 +643,10 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
                         ),
                       ),
                       const SizedBox(width: 6),
-                      Semantics(
-                        button: true,
-                        label: _hasText ? 'Enviar' : 'Grabar audio',
-                        child: ExcludeSemantics(
-                          child: Material(
-                            color: primary,
-                            shape: const CircleBorder(),
-                            child: InkWell(
-                              customBorder: const CircleBorder(),
-                              onTap: _hasText ? _submit : _startRecording,
-                              child: Listener(
-                                onPointerDown: (_) =>
-                                    setState(() => _sendPressed = true),
-                                onPointerUp: (_) =>
-                                    setState(() => _sendPressed = false),
-                                onPointerCancel: (_) =>
-                                    setState(() => _sendPressed = false),
-                                child: AnimatedScale(
-                                  scale: _sendPressed ? 0.88 : 1,
-                                  duration: motion(100),
-                                  curve: Curves.easeOut,
-                                  child: SizedBox(
-                                    width: 48,
-                                    height: 48,
-                                    child: AnimatedSwitcher(
-                                      duration: motion(160),
-                                      transitionBuilder: (child, a) =>
-                                          ScaleTransition(
-                                            scale: a,
-                                            child: child,
-                                          ),
-                                      child: Icon(
-                                        _hasText ? Icons.send : Icons.mic,
-                                        key: ValueKey(_hasText),
-                                        size: 22,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
+                      ComposerActionButton(
+                        hasText: _hasText,
+                        onSend: _submit,
+                        onRecord: _startRecording,
                       ),
                     ],
                   ),
