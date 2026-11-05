@@ -270,4 +270,64 @@ void main() {
     await settle();
     expect(repo.triggers, hasLength(1));
   });
+
+  group('juliaWorking', () {
+    test('true durante el POST y false al terminar OK', () async {
+      final cmp = Completer<Result<bool>>();
+      repo.onTrigger = (_) => cmp.future;
+      final n = c.read(chatThreadProvider(key()).notifier);
+      expect(st().juliaWorking, isFalse);
+      await n.setJulia(true);
+      expect(st().juliaWorking, isTrue);
+      cmp.complete(Result.ok(true));
+      await settle();
+      expect(st().juliaWorking, isFalse);
+    });
+
+    test('false si el POST falla', () async {
+      final cmp = Completer<Result<bool>>();
+      repo.onTrigger = (_) => cmp.future;
+      await c.read(chatThreadProvider(key()).notifier).setJulia(true);
+      expect(st().juliaWorking, isTrue);
+      cmp.complete(Result.err(Failure.server()));
+      await settle();
+      expect(st().juliaWorking, isFalse);
+    });
+
+    test('false al expirar el timeout', () {
+      fakeAsync((fa) {
+        final k = make();
+        fa.flushMicrotasks();
+        repo.onTrigger = (_) => Completer<Result<bool>>().future;
+        k.read(chatThreadProvider(key()).notifier).setJulia(true);
+        fa.flushMicrotasks();
+        expect(k.read(chatThreadProvider(key())).juliaWorking, isTrue);
+        fa.elapse(const Duration(seconds: 60));
+        fa.flushMicrotasks();
+        expect(k.read(chatThreadProvider(key())).juliaWorking, isFalse);
+      });
+    });
+
+    test('retryOrderTaker también lo marca', () async {
+      final n = c.read(chatThreadProvider(key()).notifier);
+      await n.setJulia(true);
+      await settle();
+      final cmp = Completer<Result<bool>>();
+      repo.onTrigger = (_) => cmp.future;
+      final f = n.retryOrderTaker();
+      expect(st().juliaWorking, isTrue);
+      cmp.complete(Result.ok(true));
+      await f;
+      expect(st().juliaWorking, isFalse);
+    });
+
+    test('desmontar con POST pendiente no lanza', () async {
+      final cmp = Completer<Result<bool>>();
+      repo.onTrigger = (_) => cmp.future;
+      await c.read(chatThreadProvider(key()).notifier).setJulia(true);
+      c.dispose();
+      cmp.complete(Result.ok(true));
+      await settle();
+    });
+  });
 }

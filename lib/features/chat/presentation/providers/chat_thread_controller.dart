@@ -84,6 +84,7 @@ class ThreadState {
     this.historyLoaded = false,
     this.replyTo,
     this.notice,
+    this.juliaWorking = false,
   });
 
   final Chat chat;
@@ -104,6 +105,9 @@ class ThreadState {
   /// Aviso para mostrar como PfToast (no se renderiza en el hilo).
   final ThreadNotice? notice;
 
+  /// Julia está atendiendo el chat (POST order_taker en curso).
+  final bool juliaWorking;
+
   ThreadState copyWith({
     Chat? chat,
     List<Message>? messages,
@@ -120,6 +124,7 @@ class ThreadState {
     Message? replyTo,
     bool clearReply = false,
     ThreadNotice? notice,
+    bool? juliaWorking,
   }) => ThreadState(
     chat: chat ?? this.chat,
     messages: messages ?? this.messages,
@@ -134,6 +139,7 @@ class ThreadState {
     historyLoaded: historyLoaded ?? this.historyLoaded,
     replyTo: clearReply ? null : (replyTo ?? this.replyTo),
     notice: notice ?? this.notice,
+    juliaWorking: juliaWorking ?? this.juliaWorking,
   );
 
   /// Último mensaje entrante conocido (historial o dato del chat).
@@ -161,7 +167,8 @@ class ThreadState {
           other.order == order &&
           other.historyLoaded == historyLoaded &&
           other.replyTo == replyTo &&
-          other.notice == notice;
+          other.notice == notice &&
+          other.juliaWorking == juliaWorking;
 
   @override
   int get hashCode => Object.hashAll([
@@ -178,6 +185,7 @@ class ThreadState {
     historyLoaded,
     replyTo,
     notice,
+    juliaWorking,
   ]);
 }
 
@@ -933,6 +941,7 @@ class ChatThread extends _$ChatThread {
   Future<OrderTakerOutcome> _triggerOrderTaker(String phone) async {
     if (_orderTakerInFlight) return OrderTakerOutcome.busy;
     _orderTakerInFlight = true;
+    state = state.copyWith(juliaWorking: true);
     try {
       final r = await ref
           .read(chatRepositoryProvider)
@@ -957,6 +966,7 @@ class ChatThread extends _$ChatThread {
       return OrderTakerOutcome.timeout;
     } finally {
       _orderTakerInFlight = false;
+      if (ref.mounted) state = state.copyWith(juliaWorking: false);
     }
   }
 
