@@ -8,6 +8,8 @@ import 'package:go_router/go_router.dart';
 import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
 import 'package:partsflow_mobile/core/router/app_routes.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/theme/pf_motion.dart';
+import 'package:partsflow_mobile/core/ui/pf_haptics.dart';
 import 'package:partsflow_mobile/core/realtime/chat_poll_policy.dart';
 import 'package:partsflow_mobile/core/ui/size_reporter.dart';
 import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
@@ -30,6 +32,7 @@ import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_reminde
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_common.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_composer.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_motion.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/julia_working_indicator.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/message_bubble.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/swipe_to_reply.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/templates_sheet.dart';
@@ -91,6 +94,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     _openChat.close(widget.chat.id);
     _poller.dispose();
     _flashTimer?.cancel();
+    _workingExit?.cancel();
     for (final h in _toastHandles) {
       PfToast.dismissIfCurrent(h);
     }
@@ -185,14 +189,33 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     final text = formatPhone(phone).replaceAll(' ', '');
     if (text.isEmpty) return;
     await Clipboard.setData(ClipboardData(text: text));
+    PfHaptics.light();
     _toast('Número copiado');
   }
 
+  /// Un solo uso: el usuario acaba de activar Julia (celebración + anillo).
+  bool _celebrateJulia = false;
+
+  bool _consumeCelebrate() {
+    final v = _celebrateJulia;
+    _celebrateJulia = false;
+    return v;
+  }
+
   Future<void> _toggleJulia(bool current) async {
+    _celebrateJulia = !current;
+    if (current) {
+      PfHaptics.selection();
+    } else {
+      PfHaptics.light();
+    }
     final r = await ref
         .read(chatThreadProvider(ChatKey(widget.chat)).notifier)
         .setJulia(!current);
-    if (!r.ok) return _toastResult(r);
+    if (!r.ok) {
+      _celebrateJulia = false;
+      return _toastResult(r);
+    }
     if (!current) {
       _toast(r.message, kind: PfToastKind.julia);
     } else {
@@ -284,6 +307,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
       _reply(m);
     } else {
       await Clipboard.setData(ClipboardData(text: m.text!));
+      PfHaptics.light();
       _toast('Texto copiado');
     }
   }
@@ -535,6 +559,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
                 chat: chat,
                 myUserId: myId,
                 onBack: _back,
+                onConsumeCelebrate: _consumeCelebrate,
                 onToggleJulia: () =>
                     _toggleJulia(chat.client?.juliaOn ?? false),
                 onMore: _openActions,
@@ -606,6 +631,35 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     );
   }
 
+  static const _juliaWorkingKey = 'julia-working';
+  bool _workingShown = false;
+  Timer? _workingExit;
+
+  /// Mantiene el indicador en la lista [PfMotion.juliaWorkingExit] tras
+  /// terminar, para que se desvanezca antes de retirarse.
+  bool _syncWorking(bool working, bool reduce) {
+    if (working) {
+      _workingExit?.cancel();
+      _workingExit = null;
+      // Solo aparece cerca del pie: si el usuario lee historial no se mueve
+      // el contenido visible.
+      if (!_workingShown && (!_scroll.hasClients || _scroll.offset < 40)) {
+        _workingShown = true;
+      }
+    } else if (_workingShown && _workingExit == null) {
+      if (reduce) {
+        _workingShown = false;
+      } else {
+        _workingExit = Timer(PfMotion.juliaWorkingExit, () {
+          _workingExit = null;
+          if (!mounted) return;
+          setState(() => _workingShown = false);
+        });
+      }
+    }
+    return _workingShown;
+  }
+
   Widget _buildBody(WidgetRef ref, String? myId) {
     final pf = PfColors.of(context);
     final key = ChatKey(widget.chat);
@@ -617,6 +671,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
           error: s.error,
           loadingOlder: s.loadingOlder,
           noMessages: s.messages.isEmpty,
+          juliaWorking: s.juliaWorking,
         ),
       ),
     );
@@ -641,7 +696,9 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     final entryKeys = _entryKeysCache;
     final indexByKey = _entryIndexByKeyCache;
     final reduce = MediaQuery.disableAnimationsOf(context);
-    if (entries.isEmpty) {
+    final working = _syncWorking(st.juliaWorking, reduce);
+    final skip = working ? 1 : 0;
+    if (entries.isEmpty && !working) {
       return Center(
         child: Text(
           'Aún no hay mensajes',
@@ -658,10 +715,23 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
         controller: _scroll,
         reverse: true,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-        itemCount: entries.length + (st.loadingOlder ? 1 : 0),
-        findChildIndexCallback: (key) =>
-            key is ValueKey<String> ? indexByKey[key.value] : null,
-        itemBuilder: (context, i) {
+        itemCount: skip + entries.length + (st.loadingOlder ? 1 : 0),
+        // El indicador de Julia ocupa el índice 0 (pie del hilo, lista reverse):
+        // las entradas se desplazan `skip` y su key propia no choca con las ids.
+        findChildIndexCallback: (key) {
+          if (key is! ValueKey<String>) return null;
+          if (key.value == _juliaWorkingKey) return working ? 0 : null;
+          final idx = indexByKey[key.value];
+          return idx == null ? null : idx + skip;
+        },
+        itemBuilder: (context, li) {
+          if (working && li == 0) {
+            return KeyedSubtree(
+              key: const ValueKey<String>(_juliaWorkingKey),
+              child: JuliaWorkingIndicator(visible: st.juliaWorking),
+            );
+          }
+          final i = li - skip;
           if (i >= entries.length) {
             return const Padding(
               key: ValueKey<String>('loading-older'),
@@ -764,6 +834,7 @@ class _Header extends StatelessWidget {
     required this.myUserId,
     required this.onBack,
     required this.onToggleJulia,
+    required this.onConsumeCelebrate,
     required this.onMore,
     required this.onCopyPhone,
   });
@@ -772,6 +843,7 @@ class _Header extends StatelessWidget {
   final String? myUserId;
   final VoidCallback onBack;
   final VoidCallback onToggleJulia;
+  final bool Function() onConsumeCelebrate;
   final VoidCallback onMore;
   final VoidCallback onCopyPhone;
 
@@ -875,37 +947,7 @@ class _Header extends StatelessWidget {
                     constraints: const BoxConstraints(minHeight: 44),
                     alignment: Alignment.center,
                     padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: Container(
-                      height: 36,
-                      padding: const EdgeInsets.fromLTRB(8, 0, 10, 0),
-                      decoration: BoxDecoration(
-                        color: pf.surface,
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: pf.border, width: 1.5),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          PfSwitch(
-                            value: julia,
-                            width: 28,
-                            height: 16,
-                            knob: 12,
-                            inset: 2,
-                            offColor: const Color(0xFF8A8FA3),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Julia',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: pf.textMid,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    child: JuliaPill(julia: julia, consumeCelebrate: onConsumeCelebrate),
                   ),
                 ),
               ),
@@ -1104,6 +1146,123 @@ class _WindowNotice extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Píldora "Julia" del header: se tiñe al activar y emite un anillo menta.
+@visibleForTesting
+class JuliaPill extends StatefulWidget {
+  const JuliaPill({
+    super.key,
+    required this.julia,
+    required this.consumeCelebrate,
+  });
+
+  final bool julia;
+
+  /// true solo si el cambio a ON viene de un toque del usuario (un solo uso).
+  final bool Function() consumeCelebrate;
+
+  @override
+  State<JuliaPill> createState() => _JuliaPillState();
+}
+
+class _JuliaPillState extends State<JuliaPill>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ring = AnimationController(
+    vsync: this,
+    duration: PfMotion.juliaPillRing,
+  );
+
+  bool _celebrate = false;
+
+  @override
+  void didUpdateWidget(JuliaPill old) {
+    super.didUpdateWidget(old);
+    if (widget.julia == old.julia) return;
+    _celebrate = widget.julia && widget.consumeCelebrate();
+    if (_celebrate && !MediaQuery.disableAnimationsOf(context)) {
+      _ring.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _ring.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pf = PfColors.of(context);
+    final julia = widget.julia;
+    final dur = MediaQuery.disableAnimationsOf(context)
+        ? PfMotion.reducedFade
+        : PfMotion.juliaPill;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        AnimatedContainer(
+          duration: dur,
+          height: 36,
+          padding: const EdgeInsets.fromLTRB(8, 0, 10, 0),
+          decoration: BoxDecoration(
+            color: julia ? pf.juliaBg : Colors.transparent,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: pf.border, width: 1.5),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              PfSwitch(
+                value: julia,
+                width: 28,
+                height: 16,
+                knob: 12,
+                inset: 2,
+                offColor: const Color(0xFF8A8FA3),
+                onIcon: Icons.auto_awesome,
+                offIcon: Icons.pause_rounded,
+                celebrate: _celebrate,
+              ),
+              const SizedBox(width: 6),
+              AnimatedDefaultTextStyle(
+                duration: dur,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: julia ? pf.juliaFg : pf.text2,
+                ),
+                child: const Text('Julia'),
+              ),
+            ],
+          ),
+        ),
+        Positioned.fill(
+          child: IgnorePointer(
+            child: AnimatedBuilder(
+              animation: _ring,
+              builder: (context, _) {
+                final t = _ring.value;
+                if (t <= 0 || t >= 1) return const SizedBox.shrink();
+                return Opacity(
+                  opacity: 0.8 * (1 - t),
+                  child: Transform.scale(
+                    scale: 1 + 0.35 * Curves.easeOutCubic.transform(t),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: pf.mint, width: 2),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

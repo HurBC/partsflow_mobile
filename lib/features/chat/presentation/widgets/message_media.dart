@@ -7,13 +7,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/theme/pf_motion.dart';
+import 'package:partsflow_mobile/core/ui/pf_haptics.dart';
 import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachment.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/media_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/audio_playback_coordinator.dart';
+import 'package:partsflow_mobile/features/chat/presentation/utils/audio_waveform.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/media_files.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/audio_motion.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/video_player_page.dart';
 
 void _toast(BuildContext context, String text) =>
@@ -50,7 +54,13 @@ class AudioMessageView extends ConsumerStatefulWidget {
 }
 
 class _AudioMessageViewState extends ConsumerState<AudioMessageView>
+    with SingleTickerProviderStateMixin
     implements PausableAudio {
+  late final AnimationController _playIcon = AnimationController(
+    vsync: this,
+    duration: PfMotion.audioPlayMorph,
+  );
+  List<double>? _bars;
   late final AudioPlaybackCoordinator _coordinator;
   AudioPlayer? _player;
   final _subs = <StreamSubscription<Object?>>[];
@@ -66,7 +76,38 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView>
     super.initState();
     _coordinator = ref.read(audioPlaybackCoordinatorProvider);
     final m = widget.message;
+    // Onda solo para audios propios de esta sesión.
+    _bars = ref
+        .read(audioWaveformStoreProvider)
+        .lookup(messageId: m.id, localPath: m.localPath);
     if (m.mediaId != null) _loadPreview();
+  }
+
+  @override
+  void didUpdateWidget(AudioMessageView old) {
+    super.didUpdateWidget(old);
+    // Pendiente → real: el id cambia, la onda se enlaza por el controlador.
+    if (_bars == null) {
+      final m = widget.message;
+      _bars = ref
+          .read(audioWaveformStoreProvider)
+          .lookup(messageId: m.id, localPath: m.localPath);
+    }
+  }
+
+  void _syncPlayIcon(bool playing) {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _playIcon.value = playing ? 1 : 0;
+    } else if (playing) {
+      _playIcon.forward();
+    } else {
+      _playIcon.reverse();
+    }
+  }
+
+  void _cycleSpeed() {
+    PfHaptics.selection();
+    ref.read(audioSpeedProvider.notifier).cycle();
   }
 
   @override
@@ -77,6 +118,7 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView>
     }
     _player?.dispose();
     _posN.dispose();
+    _playIcon.dispose();
     super.dispose();
   }
 
@@ -127,6 +169,7 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView>
       } else {
         throw StateError('sin audio');
       }
+      await player.setSpeed(ref.read(audioSpeedProvider));
       _subs
         ..add(
           player.playerStateStream.listen((s) {
@@ -136,8 +179,10 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView>
               player.seek(Duration.zero);
               _posN.value = Duration.zero;
               setState(() => _playing = false);
+              _syncPlayIcon(false);
             } else {
               setState(() => _playing = s.playing);
+              _syncPlayIcon(s.playing);
             }
           }),
         )
@@ -181,8 +226,13 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView>
 
   @override
   Widget build(BuildContext context) {
+    final speed = ref.watch(audioSpeedProvider);
+    ref.listen(audioSpeedProvider, (_, s) {
+      _player?.setSpeed(s).catchError((Object _) {});
+    });
     final total = _dur ?? Duration.zero;
     final max = total.inMilliseconds.toDouble();
+    final bars = _bars;
     return SizedBox(
       width: 220,
       child: Row(
@@ -205,10 +255,22 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView>
                             color: widget.color,
                           ),
                         )
-                      : Icon(
-                          _playing ? Icons.pause_circle : Icons.play_circle,
-                          size: 38,
-                          color: widget.color,
+                      : Center(
+                          child: Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: widget.color.withValues(alpha: 0.18),
+                            ),
+                            alignment: Alignment.center,
+                            child: AnimatedIcon(
+                              icon: AnimatedIcons.play_pause,
+                              progress: _playIcon,
+                              size: 24,
+                              color: widget.color,
+                            ),
+                          ),
                         ),
                 ),
               ),
@@ -218,52 +280,144 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                SliderTheme(
-                  data: SliderTheme.of(context).copyWith(
-                    trackHeight: 3,
-                    thumbShape: const RoundSliderThumbShape(
-                      enabledThumbRadius: 6,
-                    ),
-                    overlayShape: SliderComponentShape.noOverlay,
-                    activeTrackColor: widget.color,
-                    inactiveTrackColor: widget.color.withValues(alpha: 0.3),
-                    thumbColor: widget.color,
-                  ),
-                  child: ValueListenableBuilder<Duration>(
-                    valueListenable: _posN,
-                    builder: (_, pos, _) => Slider(
-                      value: max <= 0
-                          ? 0.0
-                          : pos.inMilliseconds.clamp(0, max).toDouble(),
-                      max: max <= 0 ? 1 : max,
-                      onChanged: _ready && max > 0
-                          ? (v) {
-                              final d = Duration(milliseconds: v.round());
-                              _posN.value = d;
-                              _player?.seek(d);
-                            }
-                          : null,
-                    ),
-                  ),
-                ),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 12),
-                    child: ValueListenableBuilder<Duration>(
-                      valueListenable: _posN,
-                      builder: (_, pos, _) {
-                        final shown = _ready && _playing || pos > Duration.zero
-                            ? pos
-                            : total;
-                        return Text(
-                          total == Duration.zero && !_ready
-                              ? 'Audio'
-                              : mmss(shown),
-                          style: TextStyle(fontSize: 12, color: widget.color),
+                ValueListenableBuilder<Duration>(
+                  valueListenable: _posN,
+                  builder: (_, pos, _) {
+                    if (bars != null) {
+                      final canSeek = _ready && max > 0;
+                      void seekBy(int secs) {
+                        final ms = (pos.inMilliseconds + secs * 1000).clamp(
+                          0,
+                          max.toInt(),
                         );
-                      },
-                    ),
+                        final d = Duration(milliseconds: ms);
+                        _posN.value = d;
+                        _player?.seek(d);
+                      }
+
+                      String at(int secs) => mmss(
+                        Duration(
+                          milliseconds: (pos.inMilliseconds + secs * 1000)
+                              .clamp(0, max.toInt()),
+                        ),
+                      );
+                      return Semantics(
+                        slider: true,
+                        label: 'Progreso del audio',
+                        value: mmss(pos),
+                        increasedValue: canSeek ? at(5) : null,
+                        decreasedValue: canSeek ? at(-5) : null,
+                        onIncrease: canSeek ? () => seekBy(5) : null,
+                        onDecrease: canSeek ? () => seekBy(-5) : null,
+                        child: WaveformSeekBar(
+                          bars: bars,
+                          color: widget.color,
+                          progress: max <= 0
+                              ? 0
+                              : (pos.inMilliseconds / max).clamp(0.0, 1.0),
+                          onSeek: _ready && max > 0
+                              ? (f) {
+                                  final d = Duration(
+                                    milliseconds: (f * max).round(),
+                                  );
+                                  _posN.value = d;
+                                  _player?.seek(d);
+                                }
+                              : null,
+                        ),
+                      );
+                    }
+                    return SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 3,
+                        thumbShape: const RoundSliderThumbShape(
+                          enabledThumbRadius: 6,
+                        ),
+                        overlayShape: SliderComponentShape.noOverlay,
+                        activeTrackColor: widget.color,
+                        inactiveTrackColor: widget.color.withValues(alpha: 0.3),
+                        thumbColor: widget.color,
+                      ),
+                      child: Slider(
+                        value: max <= 0
+                            ? 0.0
+                            : pos.inMilliseconds.clamp(0, max).toDouble(),
+                        max: max <= 0 ? 1 : max,
+                        onChanged: _ready && max > 0
+                            ? (v) {
+                                final d = Duration(milliseconds: v.round());
+                                _posN.value = d;
+                                _player?.seek(d);
+                              }
+                            : null,
+                      ),
+                    );
+                  },
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 12),
+                  child: Row(
+                    children: [
+                      ValueListenableBuilder<Duration>(
+                        valueListenable: _posN,
+                        builder: (_, pos, _) {
+                          final shown =
+                              _ready && _playing || pos > Duration.zero
+                              ? pos
+                              : total;
+                          return Text(
+                            total == Duration.zero && !_ready
+                                ? 'Audio'
+                                : mmss(shown),
+                            style: TextStyle(fontSize: 12, color: widget.color),
+                          );
+                        },
+                      ),
+                      const Spacer(),
+                      Semantics(
+                        button: true,
+                        onTap: _cycleSpeed,
+                        label:
+                            'Velocidad de reproducción, ${audioSpeedLabel(speed)}',
+                        child: ExcludeSemantics(
+                          // Área táctil ≥ 40 px; el chip visual sigue pequeño.
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: _cycleSpeed,
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(
+                                minWidth: 44,
+                                minHeight: 40,
+                              ),
+                              child: Center(
+                                child: Container(
+                                  constraints: const BoxConstraints(
+                                    minWidth: 36,
+                                    minHeight: 24,
+                                  ),
+                                  alignment: Alignment.center,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(10),
+                                    color: widget.color.withValues(alpha: 0.18),
+                                  ),
+                                  child: Text(
+                                    audioSpeedLabel(speed),
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: widget.color,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],

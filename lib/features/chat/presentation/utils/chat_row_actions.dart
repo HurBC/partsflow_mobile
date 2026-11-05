@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:partsflow_mobile/core/ui/pf_haptics.dart';
 import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
@@ -44,6 +45,7 @@ Future<void> showChatRowActions(
       final text = formatPhone(chat.phone).replaceAll(' ', '');
       if (text.isEmpty) return;
       await Clipboard.setData(ClipboardData(text: text));
+      PfHaptics.light();
       toast('Número copiado', PfToastKind.success);
       return;
     default:

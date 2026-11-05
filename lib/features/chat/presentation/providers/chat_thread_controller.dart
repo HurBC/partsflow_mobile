@@ -23,6 +23,7 @@ import 'package:partsflow_mobile/features/chat/domain/entities/thread_note.dart'
 import 'package:partsflow_mobile/features/chat/domain/logic/messages.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_actions_service.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
+import 'package:partsflow_mobile/features/chat/presentation/providers/media_providers.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 export 'package:partsflow_mobile/features/chat/domain/entities/thread_note.dart';
@@ -84,6 +85,7 @@ class ThreadState {
     this.historyLoaded = false,
     this.replyTo,
     this.notice,
+    this.juliaWorking = false,
   });
 
   final Chat chat;
@@ -104,6 +106,9 @@ class ThreadState {
   /// Aviso para mostrar como PfToast (no se renderiza en el hilo).
   final ThreadNotice? notice;
 
+  /// Julia está atendiendo el chat (POST order_taker en curso).
+  final bool juliaWorking;
+
   ThreadState copyWith({
     Chat? chat,
     List<Message>? messages,
@@ -120,6 +125,7 @@ class ThreadState {
     Message? replyTo,
     bool clearReply = false,
     ThreadNotice? notice,
+    bool? juliaWorking,
   }) => ThreadState(
     chat: chat ?? this.chat,
     messages: messages ?? this.messages,
@@ -134,6 +140,7 @@ class ThreadState {
     historyLoaded: historyLoaded ?? this.historyLoaded,
     replyTo: clearReply ? null : (replyTo ?? this.replyTo),
     notice: notice ?? this.notice,
+    juliaWorking: juliaWorking ?? this.juliaWorking,
   );
 
   /// Último mensaje entrante conocido (historial o dato del chat).
@@ -161,7 +168,8 @@ class ThreadState {
           other.order == order &&
           other.historyLoaded == historyLoaded &&
           other.replyTo == replyTo &&
-          other.notice == notice;
+          other.notice == notice &&
+          other.juliaWorking == juliaWorking;
 
   @override
   int get hashCode => Object.hashAll([
@@ -178,6 +186,7 @@ class ThreadState {
     historyLoaded,
     replyTo,
     notice,
+    juliaWorking,
   ]);
 }
 
@@ -745,6 +754,13 @@ class ChatThread extends _$ChatThread {
     if (job == null) return false;
     String? error = await _ensureUploaded(localId);
     if (!ref.mounted) return false;
+    // Para enlazar la onda del audio propio con el mensaje real que aparezca.
+    final knownIds = job.file?.kind == AttachmentKind.audio
+        ? {for (final m in state.messages) m.id}
+        : null;
+    final localDate = knownIds == null
+        ? null
+        : state.pending.where((m) => m.id == localId).firstOrNull?.date;
     if (error == null) {
       final wasAutomatic = state.chat.client?.operationMode == 'automatic';
       final isAudio = job.file?.kind == AttachmentKind.audio;
@@ -809,12 +825,36 @@ class ChatThread extends _$ChatThread {
     }
     await _loadFirstPage();
     if (!ref.mounted) return false;
+    if (knownIds != null && localDate != null) {
+      _linkWaveform(job.file!.path, knownIds, localDate, me);
+    }
     _jobs.remove(localId);
     state = state.copyWith(
       pending: state.pending.where((m) => m.id != localId).toList(),
     );
     ref.read(chatListControllerProvider.notifier).poll();
     return true;
+  }
+
+  /// El pendiente (`local-…`) y el mensaje real no comparten id: se enlaza al
+  /// audio propio nuevo (ver [pickWaveformCandidate]). Si no hay candidato
+  /// claro no se enlaza y la burbuja usa el Slider.
+  void _linkWaveform(
+    String path,
+    Set<String> knownIds,
+    DateTime localDate,
+    ApiUser? me,
+  ) {
+    final store = ref.read(audioWaveformStoreProvider);
+    if (store.forPath(path) == null) return;
+    final id = pickWaveformCandidate(
+      state.messages,
+      knownIds: knownIds,
+      linkedIds: store.linkedIds,
+      localDate: localDate,
+      myUserId: me?.id,
+    );
+    if (id != null) store.link(path, id);
   }
 
   /// Envía una plantilla (sin mensaje optimista: se ve al recargar).
@@ -933,6 +973,7 @@ class ChatThread extends _$ChatThread {
   Future<OrderTakerOutcome> _triggerOrderTaker(String phone) async {
     if (_orderTakerInFlight) return OrderTakerOutcome.busy;
     _orderTakerInFlight = true;
+    state = state.copyWith(juliaWorking: true);
     try {
       final r = await ref
           .read(chatRepositoryProvider)
@@ -957,6 +998,7 @@ class ChatThread extends _$ChatThread {
       return OrderTakerOutcome.timeout;
     } finally {
       _orderTakerInFlight = false;
+      if (ref.mounted) state = state.copyWith(juliaWorking: false);
     }
   }
 
@@ -994,6 +1036,42 @@ class ChatThread extends _$ChatThread {
   ) async => _applyOutcome(
     await call(ref.read(chatActionsServiceProvider), state.chat),
   );
+}
+
+/// Id del mensaje real al que pertenece una onda propia, o null.
+///
+/// Estricto: audio, autor "yo" (excluye Julia/IA, otros operadores y mensajes
+/// de otro usuario), no existente antes del envío, no enlazado a otra onda
+/// (envíos concurrentes) y con fecha a ≤ 2 min de la del pendiente; entre
+/// varios, el de fecha más cercana. El modelo no expone la duración del audio,
+/// por eso no se usa.
+@visibleForTesting
+String? pickWaveformCandidate(
+  List<Message> messages, {
+  required Set<String> knownIds,
+  required Set<String> linkedIds,
+  required DateTime localDate,
+  required String? myUserId,
+}) {
+  const window = Duration(minutes: 2);
+  Message? best;
+  Duration? bestGap;
+  for (final m in messages) {
+    if (m.type != 'audio' ||
+        m.isLocal ||
+        knownIds.contains(m.id) ||
+        linkedIds.contains(m.id) ||
+        m.author(myUserId) != MessageAuthor.me) {
+      continue;
+    }
+    final gap = m.date.difference(localDate).abs();
+    if (gap > window) continue;
+    if (bestGap == null || gap < bestGap) {
+      best = m;
+      bestGap = gap;
+    }
+  }
+  return best?.id;
 }
 
 class _SendJob {

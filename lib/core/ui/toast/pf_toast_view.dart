@@ -292,13 +292,6 @@ class _Capsule extends StatelessWidget {
       decoration: BoxDecoration(
         color: pal.capsule,
         borderRadius: BorderRadius.circular(26),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x470F1222),
-            offset: Offset(0, 12),
-            blurRadius: 32,
-          ),
-        ],
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(26),

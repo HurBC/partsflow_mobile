@@ -9,6 +9,34 @@ abstract class PfMotion {
   static const toastChipDelay = Duration(milliseconds: 110);
   static const toastIconDelay = Duration(milliseconds: 300);
 
+  // Toggle de Julia (PfSwitch / píldora / indicador).
+  static const switchKnob = Duration(milliseconds: 340);
+  static const switchTrack = Duration(milliseconds: 260);
+  static const switchIconPop = Duration(milliseconds: 380);
+  static const switchBurst = Duration(milliseconds: 520);
+  static const juliaPill = Duration(milliseconds: 300);
+  static const juliaPillRing = Duration(milliseconds: 700);
+  static const juliaDots = Duration(milliseconds: 1100);
+  static const juliaDotStagger = Duration(milliseconds: 150);
+  static const juliaSpin = Duration(milliseconds: 2400);
+  static const juliaWorkingEnter = Duration(milliseconds: 300);
+  static const juliaWorkingExit = Duration(milliseconds: 200);
+
+  // Texto del chat (composer, burbujas, ticks).
+  static const composerMorph = Duration(milliseconds: 280);
+  static const composerColor = Duration(milliseconds: 200);
+  static const composerTakeoff = Duration(milliseconds: 260);
+  static const bubbleEnter = Duration(milliseconds: 440);
+  static const tickDraw = Duration(milliseconds: 300);
+  static const tickPop = Duration(milliseconds: 320);
+  static const errorShake = Duration(milliseconds: 420);
+
+  // Audio (grabación y burbuja).
+  static const recDotBreath = Duration(milliseconds: 1200);
+  static const recAmpSample = Duration(milliseconds: 100);
+  static const recDiscard = Duration(milliseconds: 340);
+  static const audioPlayMorph = Duration(milliseconds: 220);
+
   /// Con "reducir animaciones" solo hay fundido.
   static const reducedFade = Duration(milliseconds: 160);
 

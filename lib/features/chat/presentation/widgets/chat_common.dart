@@ -1,7 +1,10 @@
+import 'dart:math' as math;
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../utils/image_sizing.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/theme/pf_motion.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.dart';
 
@@ -124,7 +127,10 @@ class ErrorState extends StatelessWidget {
 }
 
 /// Toggle visual (track + knob) usado en la hoja de filtros y en Julia.
-class PfSwitch extends StatelessWidget {
+///
+/// Con [onIcon]/[offIcon] muestra un ícono en la perilla que cambia con "pop".
+/// Con [celebrate], al pasar a ON lanza una ráfaga de puntos menta.
+class PfSwitch extends StatefulWidget {
   const PfSwitch({
     super.key,
     required this.value,
@@ -133,6 +139,9 @@ class PfSwitch extends StatelessWidget {
     this.knob = 24,
     this.inset = 4,
     this.offColor,
+    this.onIcon,
+    this.offIcon,
+    this.celebrate = false,
   });
 
   final bool value;
@@ -141,36 +150,164 @@ class PfSwitch extends StatelessWidget {
   final double knob;
   final double inset;
   final Color? offColor;
+  final IconData? onIcon;
+  final IconData? offIcon;
+  final bool celebrate;
+
+  @override
+  State<PfSwitch> createState() => _PfSwitchState();
+}
+
+class _PfSwitchState extends State<PfSwitch>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _burst = AnimationController(
+    vsync: this,
+    duration: PfMotion.switchBurst,
+  );
+
+  @override
+  void didUpdateWidget(PfSwitch old) {
+    super.didUpdateWidget(old);
+    if (widget.celebrate &&
+        widget.value &&
+        !old.value &&
+        !MediaQuery.disableAnimationsOf(context)) {
+      _burst.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _burst.dispose();
+    super.dispose();
+  }
+
+  Widget _knobChild(PfColors pf, Color primary, bool reduce) {
+    final icon = widget.value ? widget.onIcon : widget.offIcon;
+    if (widget.onIcon == null && widget.offIcon == null) {
+      return const SizedBox.shrink();
+    }
+    return AnimatedSwitcher(
+      duration: reduce ? Duration.zero : PfMotion.switchIconPop,
+      switchInCurve: PfMotion.overshoot,
+      switchOutCurve: Curves.easeIn,
+      transitionBuilder: (child, anim) => AnimatedBuilder(
+        animation: anim,
+        builder: (context, _) => Opacity(
+          opacity: anim.value.clamp(0.0, 1.0),
+          child: Transform.rotate(
+            angle: -0.698 * (1 - anim.value),
+            child: Transform.scale(scale: anim.value, child: child),
+          ),
+        ),
+      ),
+      child: icon == null
+          ? const SizedBox.shrink(key: ValueKey('none'))
+          : Icon(
+              icon,
+              key: ValueKey(widget.value),
+              size: widget.knob * 0.7,
+              color: widget.value ? primary : (widget.offColor ?? pf.border),
+            ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final pf = PfColors.of(context);
     final on = Theme.of(context).colorScheme.primary;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 150),
-      width: width,
-      height: height,
-      decoration: BoxDecoration(
-        color: value ? on : (offColor ?? pf.border),
-        borderRadius: BorderRadius.circular(height / 2),
+    final reduce = MediaQuery.disableAnimationsOf(context);
+    final knobDur = reduce ? PfMotion.reducedFade : PfMotion.switchKnob;
+    final trackDur = reduce ? PfMotion.reducedFade : PfMotion.switchTrack;
+    final knob = Container(
+      width: widget.knob,
+      height: widget.knob,
+      alignment: Alignment.center,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
       ),
-      child: AnimatedAlign(
-        duration: const Duration(milliseconds: 150),
-        alignment: value ? Alignment.centerRight : Alignment.centerLeft,
-        child: Padding(
-          padding: EdgeInsets.all(inset),
-          child: Container(
-            width: knob,
-            height: knob,
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
+      child: _knobChild(pf, on, reduce),
+    );
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        AnimatedContainer(
+          duration: trackDur,
+          width: widget.width,
+          height: widget.height,
+          decoration: BoxDecoration(
+            color: widget.value ? on : (widget.offColor ?? pf.border),
+            borderRadius: BorderRadius.circular(widget.height / 2),
+          ),
+          child: AnimatedAlign(
+            duration: knobDur,
+            curve: reduce ? Curves.linear : PfMotion.overshoot,
+            alignment: widget.value
+                ? Alignment.centerRight
+                : Alignment.centerLeft,
+            child: Padding(
+              padding: EdgeInsets.all(widget.inset),
+              child: knob,
             ),
           ),
         ),
-      ),
+        if (widget.celebrate)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  painter: _BurstPainter(
+                    _burst,
+                    color: pf.mint,
+                    center: Offset(
+                      widget.width - widget.inset - widget.knob / 2,
+                      widget.height / 2,
+                    ),
+                    dot: (widget.knob / 8).clamp(1.5, 3.0),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
+}
+
+/// Ráfaga de 6 puntos que se alejan ~24 px de la perilla y se desvanecen.
+class _BurstPainter extends CustomPainter {
+  _BurstPainter(
+    this.anim, {
+    required this.color,
+    required this.center,
+    required this.dot,
+  }) : super(repaint: anim);
+
+  final Animation<double> anim;
+  final Color color;
+  final Offset center;
+  final double dot;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final t = anim.value;
+    if (t <= 0 || t >= 1) return;
+    final dist = 24 * Curves.easeOutCubic.transform(t);
+    final paint = Paint()..color = color.withValues(alpha: 1 - t);
+    for (var i = 0; i < 6; i++) {
+      final a = i * math.pi / 3;
+      canvas.drawCircle(
+        center + Offset(math.cos(a), math.sin(a)) * dist,
+        dot * (1 - t * 0.4),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_BurstPainter old) =>
+      old.color != color || old.center != center || old.dot != dot;
 }
 
 /// Barra superior de una hoja modal (agarre).

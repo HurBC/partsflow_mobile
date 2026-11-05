@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/theme/pf_motion.dart';
+import 'package:partsflow_mobile/core/ui/pf_haptics.dart';
 import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
@@ -17,9 +20,13 @@ import 'package:partsflow_mobile/features/chat/domain/entities/quick_answer.dart
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_extras_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_thread_controller.dart';
+import 'package:partsflow_mobile/features/chat/presentation/providers/media_providers.dart';
+import 'package:partsflow_mobile/features/chat/presentation/utils/audio_waveform.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/media_files.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/attachment_preview_page.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/audio_motion.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/composer_action_button.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/quick_answers_sheet.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/templates_sheet.dart';
 import 'package:path_provider/path_provider.dart';
@@ -49,11 +56,11 @@ class ChatComposer extends ConsumerStatefulWidget {
   ConsumerState<ChatComposer> createState() => _ChatComposerState();
 }
 
-class _ChatComposerState extends ConsumerState<ChatComposer> {
+class _ChatComposerState extends ConsumerState<ChatComposer>
+    with SingleTickerProviderStateMixin {
   final _controller = TextEditingController();
   late final FocusNode _focus = widget.focusNode ?? (_ownFocus = FocusNode());
   FocusNode? _ownFocus;
-  bool _sendPressed = false;
   final _picker = ImagePicker();
   AudioRecorder? _recorder;
   bool _hasText = false;
@@ -63,6 +70,19 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
   Duration _elapsed = Duration.zero;
   Timer? _ticker;
   bool _busy = false;
+
+  // Presentación de la grabación (la lógica de grabar no depende de esto).
+  StreamSubscription<Amplitude>? _ampSub;
+  final List<double> _samples = [];
+  final ValueNotifier<List<double>> _liveBars = ValueNotifier(
+    List<double>.filled(liveWaveformBars, 0),
+  );
+  final ValueNotifier<double> _amp = ValueNotifier(0);
+  late final AnimationController _collapse = AnimationController(
+    vsync: this,
+    duration: PfMotion.recDiscard,
+  );
+  bool _discarding = false;
 
   ChatThread get _thread =>
       ref.read(chatThreadProvider(ChatKey(widget.chat)).notifier);
@@ -85,6 +105,10 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
   @override
   void dispose() {
     _ticker?.cancel();
+    _ampSub?.cancel();
+    _collapse.dispose();
+    _liveBars.dispose();
+    _amp.dispose();
     _recorder?.cancel().whenComplete(() => _recorder?.dispose());
     _controller.dispose();
     _ownFocus?.dispose();
@@ -96,11 +120,12 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
     PfToast.show(context, text, kind: kind);
   }
 
-  void _submit() {
+  bool _submit() {
     final text = _controller.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty) return false;
     _thread.send(text);
     _controller.clear();
+    return true;
   }
 
   // ---- Menú "+" --------------------------------------------------------------
@@ -394,6 +419,8 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       pfLog('record: started');
       if (!mounted) return;
       _focus.unfocus();
+      _resetLive();
+      _listenAmplitude(rec);
       setState(() {
         _recording = true;
         _elapsed = Duration.zero;
@@ -408,6 +435,35 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       );
       _toast('No se pudo grabar: ${shortError(e)}');
     }
+  }
+
+  void _resetLive() {
+    _samples.clear();
+    _liveBars.value = List<double>.filled(liveWaveformBars, 0);
+    _amp.value = 0;
+    _collapse.value = 0;
+    _discarding = false;
+  }
+
+  /// Amplitud real (dBFS) → 0..1; alimenta la onda en vivo, el anillo y las
+  /// muestras que luego dibujan la burbuja.
+  void _listenAmplitude(AudioRecorder rec) {
+    _ampSub?.cancel();
+    _ampSub = rec.onAmplitudeChanged(PfMotion.recAmpSample).listen(
+      (a) {
+        if (!mounted || _discarding) return;
+        final v = normalizeDb(a.current);
+        _samples.add(v);
+        _amp.value = v;
+        _liveBars.value = [..._liveBars.value.skip(1), v];
+      },
+      onError: (Object e) => pfLog('record: amplitud falló: ${truncateLog(e)}'),
+    );
+  }
+
+  void _stopAmplitude() {
+    _ampSub?.cancel();
+    _ampSub = null;
   }
 
   Future<void> _explainMic() => showDialog<void>(
@@ -428,14 +484,34 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
   );
 
   Future<void> _cancelRecording() async {
+    if (_discarding || _stopping) return;
     _ticker?.cancel();
-    setState(() => _recording = false);
+    _stopAmplitude();
+    PfHaptics.selection();
+    final reduce = MediaQuery.disableAnimationsOf(context);
+    if (reduce) {
+      setState(() => _recording = false);
+    } else {
+      // Colapso hacia la papelera antes de volver al estado normal.
+      setState(() => _discarding = true);
+    }
+    final collapse = reduce ? null : _collapse.forward(from: 0).orCancel;
     try {
       await _recorder?.cancel();
       pfLog('record: cancelado');
     } catch (e) {
       pfLog('record: cancel falló: ${truncateLog(e)}');
     }
+    try {
+      await collapse;
+    } on TickerCanceled {
+      // Desmontado durante el colapso.
+    }
+    if (!mounted) return;
+    setState(() {
+      _recording = false;
+      _discarding = false;
+    });
   }
 
   /// Envía y, si la subida terminó bien, borra los temporales propios
@@ -456,9 +532,10 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
   }
 
   Future<void> _sendRecording() async {
-    if (_stopping) return;
+    if (_stopping || _discarding) return;
     _stopping = true;
     _ticker?.cancel();
+    _stopAmplitude();
     final seconds = _elapsed.inSeconds;
     try {
       final path = await _recorder?.stop();
@@ -489,6 +566,9 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       }
       final name =
           'audio-${DateTime.now().millisecondsSinceEpoch}.${_recFormat.ext}';
+      ref
+          .read(audioWaveformStoreProvider)
+          .putForPath(path, downsampleWaveform(_samples));
       unawaited(
         _sendAndClean([
           OutgoingAttachment(
@@ -531,7 +611,6 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
   @override
   Widget build(BuildContext context) {
     final pf = PfColors.of(context);
-    final primary = Theme.of(context).colorScheme.primary;
     final reduce = MediaQuery.disableAnimationsOf(context);
     Duration motion(int ms) =>
         reduce ? Duration.zero : Duration(milliseconds: ms);
@@ -643,50 +722,10 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
                         ),
                       ),
                       const SizedBox(width: 6),
-                      Semantics(
-                        button: true,
-                        label: _hasText ? 'Enviar' : 'Grabar audio',
-                        child: ExcludeSemantics(
-                          child: Material(
-                            color: primary,
-                            shape: const CircleBorder(),
-                            child: InkWell(
-                              customBorder: const CircleBorder(),
-                              onTap: _hasText ? _submit : _startRecording,
-                              child: Listener(
-                                onPointerDown: (_) =>
-                                    setState(() => _sendPressed = true),
-                                onPointerUp: (_) =>
-                                    setState(() => _sendPressed = false),
-                                onPointerCancel: (_) =>
-                                    setState(() => _sendPressed = false),
-                                child: AnimatedScale(
-                                  scale: _sendPressed ? 0.88 : 1,
-                                  duration: motion(100),
-                                  curve: Curves.easeOut,
-                                  child: SizedBox(
-                                    width: 48,
-                                    height: 48,
-                                    child: AnimatedSwitcher(
-                                      duration: motion(160),
-                                      transitionBuilder: (child, a) =>
-                                          ScaleTransition(
-                                            scale: a,
-                                            child: child,
-                                          ),
-                                      child: Icon(
-                                        _hasText ? Icons.send : Icons.mic,
-                                        key: ValueKey(_hasText),
-                                        size: 22,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
+                      ComposerActionButton(
+                        hasText: _hasText,
+                        onSend: _submit,
+                        onRecord: _startRecording,
                       ),
                     ],
                   ),
@@ -698,77 +737,86 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
 
   Widget _recordingRow(PfColors pf) {
     final primary = Theme.of(context).colorScheme.primary;
-    return Row(
-      children: [
-        IconButton(
-          tooltip: 'Cancelar grabación',
-          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-          onPressed: _cancelRecording,
-          icon: Icon(Icons.delete_outline, color: pf.errFg),
+    final reduce = MediaQuery.disableAnimationsOf(context);
+    final trash = IconButton(
+      tooltip: 'Cancelar grabación',
+      constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+      onPressed: _cancelRecording,
+      icon: Icon(Icons.delete_outline, color: pf.errFg),
+    );
+    final pill = Semantics(
+      liveRegion: true,
+      label: 'Grabando, ${mmss(_elapsed)}',
+      child: ExcludeSemantics(
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 44),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            color: pf.bg,
+            borderRadius: BorderRadius.circular(22),
+          ),
+          child: RecordingPill(
+            bars: _liveBars,
+            time: mmss(_elapsed),
+            reduceMotion: reduce,
+          ),
         ),
-        Expanded(
-          child: Semantics(
-            liveRegion: true,
-            label: 'Grabando, ${mmss(_elapsed)}',
-            child: ExcludeSemantics(
-              child: Container(
-                constraints: const BoxConstraints(minHeight: 44),
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                decoration: BoxDecoration(
-                  color: pf.bg,
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: pf.errIcon,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      mmss(_elapsed),
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: pf.text,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      'Grabando…',
-                      style: TextStyle(fontSize: 14, color: pf.text2),
-                    ),
-                  ],
-                ),
+      ),
+    );
+    final send = Semantics(
+      button: true,
+      label: 'Enviar audio',
+      child: ExcludeSemantics(
+        child: AmplitudeRing(
+          amplitude: _amp,
+          color: primary,
+          reduceMotion: reduce,
+          child: Material(
+            color: primary,
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: _sendRecording,
+              child: const SizedBox(
+                width: 48,
+                height: 48,
+                child: Icon(Icons.send, size: 22, color: Colors.white),
               ),
             ),
           ),
         ),
-        const SizedBox(width: 6),
-        Semantics(
-          button: true,
-          label: 'Enviar audio',
-          child: ExcludeSemantics(
-            child: Material(
-              color: primary,
-              shape: const CircleBorder(),
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: _sendRecording,
-                child: const SizedBox(
-                  width: 48,
-                  height: 48,
-                  child: Icon(Icons.send, size: 22, color: Colors.white),
+      ),
+    );
+    // Descartar: la píldora y el botón de enviar se pliegan hacia la papelera
+    // (solo transform/opacity; la fila no cambia de tamaño).
+    return AnimatedBuilder(
+      animation: _collapse,
+      builder: (_, _) {
+        final t = Curves.easeInCubic.transform(_collapse.value);
+        return Row(
+          children: [
+            Transform.scale(
+              scale: 1 + 0.25 * math.sin(t * math.pi),
+              child: trash,
+            ),
+            Expanded(
+              child: Opacity(
+                opacity: 1 - t,
+                child: Transform(
+                  alignment: Alignment.centerLeft,
+                  transform: Matrix4.diagonal3Values(1 - t, 1 - 0.3 * t, 1),
+                  child: pill,
                 ),
               ),
             ),
-          ),
-        ),
-      ],
+            const SizedBox(width: 6),
+            Opacity(
+              opacity: 1 - t,
+              child: Transform.scale(scale: 1 - 0.6 * t, child: send),
+            ),
+          ],
+        );
+      },
     );
   }
 }

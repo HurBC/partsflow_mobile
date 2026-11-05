@@ -8,6 +8,7 @@ import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
 import 'package:partsflow_mobile/core/router/app_routes.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/core/realtime/chat_poll_policy.dart';
+import 'package:partsflow_mobile/core/ui/pf_shimmer.dart';
 import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:partsflow_mobile/core/utils/foreground_poller.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
@@ -24,6 +25,8 @@ import 'package:partsflow_mobile/features/chat/presentation/widgets/action_requi
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_common.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_filters_sheet.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_motion.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_list_motion.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_tab_strip.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_tile.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/message_result_tile.dart';
 
@@ -590,21 +593,10 @@ class _Header extends StatelessWidget {
           const SizedBox(height: 6),
           SizedBox(
             height: 48,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: ChatTab.values.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 8),
-              itemBuilder: (_, i) {
-                final t = ChatTab.values[i];
-                final enabled = t != ChatTab.assigned || assignedEnabled;
-                return _TabPill(
-                  label: t.label,
-                  selected: t == tab,
-                  enabled: enabled,
-                  onTap: () => onTab(t),
-                );
-              },
+            child: ChatTabStrip(
+              tab: tab,
+              assignedEnabled: assignedEnabled,
+              onTab: onTab,
             ),
           ),
           if (activeFilters.isNotEmpty)
@@ -733,64 +725,6 @@ class _ActiveFilterChip extends StatelessWidget {
                     const SizedBox(width: 4),
                     Icon(Icons.close, size: 16, color: pf.link),
                   ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TabPill extends StatelessWidget {
-  const _TabPill({
-    required this.label,
-    required this.selected,
-    required this.enabled,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final bool enabled;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final pf = PfColors.of(context);
-    final primary = Theme.of(context).colorScheme.primary;
-    final onPrimary = Theme.of(context).colorScheme.onPrimary;
-    return Semantics(
-      button: true,
-      selected: selected,
-      enabled: enabled,
-      label: label,
-      child: ExcludeSemantics(
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: enabled ? onTap : null,
-          child: Center(
-            child: Opacity(
-              opacity: enabled ? 1 : 0.45,
-              child: Container(
-                height: 36,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: selected ? primary : pf.surface,
-                  borderRadius: BorderRadius.circular(18),
-                  border: selected
-                      ? null
-                      : Border.all(color: pf.border, width: 1.5),
-                ),
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                    color: selected ? onPrimary : pf.textMid,
-                  ),
                 ),
               ),
             ),
@@ -1024,6 +958,43 @@ class _ChatListViewState extends ConsumerState<_ChatListView> {
   };
   final _played = <String>{};
   final _mountedAt = DateTime.now();
+  final _rise = ChatRiseDetector();
+  String? _riseId;
+  int _riseToken = 0;
+  DateTime? _riseAt;
+  late Object _source;
+
+  /// Lo que define la fuente de la lista; si cambia, no hay "subió".
+  Object _readSource() => ref.read(
+    chatListControllerProvider.select(
+      (s) => (s.tab, s.searchText, s.searchMode, s.filters),
+    ),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _source = _readSource();
+    // Snapshot inicial: la carga inicial nunca cuenta como "subió".
+    _rise.update(widget.ids, ref.read(chatsByIdProvider));
+  }
+
+  @override
+  void didUpdateWidget(_ChatListView old) {
+    super.didUpdateWidget(old);
+    if (identical(old.ids, widget.ids)) return;
+    final source = _readSource();
+    if (source != _source) {
+      _source = source;
+      _rise.reset();
+    }
+    final rose = _rise.update(widget.ids, ref.read(chatsByIdProvider));
+    if (rose != null) {
+      _riseId = rose;
+      _riseToken++;
+      _riseAt = DateTime.now();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1043,11 +1014,21 @@ class _ChatListViewState extends ConsumerState<_ChatListView> {
               !_played.contains(id) &&
               DateTime.now().difference(_mountedAt) < _window;
           if (animate) _played.add(id);
+          final riseAt = _riseAt;
+          final token =
+              id == _riseId &&
+                  riseAt != null &&
+                  DateTime.now().difference(riseAt) < chatRiseWindow
+              ? _riseToken
+              : 0;
           return StaggerIn(
             key: ValueKey(id),
             animate: animate,
             delay: Duration(milliseconds: 35 * (idx ?? 0)),
-            child: _ChatRow(id: id, onOpen: widget.onOpen),
+            child: ChatRowRise(
+              token: token,
+              child: _ChatRow(id: id, onOpen: widget.onOpen),
+            ),
           );
         },
       ),
@@ -1130,26 +1111,28 @@ class _Skeleton extends StatelessWidget {
     return Semantics(
       label: 'Cargando chats',
       child: ExcludeSemantics(
-        child: ListView.builder(
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: 8,
-          itemBuilder: (_, i) => Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Row(
-              children: [
-                block(48, 48, r: 24),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      block(150 + (i % 3) * 30, 14),
-                      const SizedBox(height: 8),
-                      block(double.infinity, 12),
-                    ],
+        child: PfShimmer(
+          child: ListView.builder(
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: 8,
+            itemBuilder: (_, i) => Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  block(48, 48, r: 24),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        block(150 + (i % 3) * 30, 14),
+                        const SizedBox(height: 8),
+                        block(double.infinity, 12),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

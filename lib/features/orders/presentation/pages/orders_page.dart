@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:partsflow_mobile/core/router/app_routes.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/ui/pf_shimmer.dart';
 import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:partsflow_mobile/core/utils/foreground_poller.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
@@ -494,26 +495,28 @@ class _Skeleton extends StatelessWidget {
     return Semantics(
       label: 'Cargando pedidos',
       child: ExcludeSemantics(
-        child: ListView.separated(
-          physics: const NeverScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(12),
-          itemCount: 6,
-          separatorBuilder: (_, _) => const SizedBox(height: 10),
-          itemBuilder: (_, i) => Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: pf.surface,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                block(150 + (i % 3) * 30, 16),
-                const SizedBox(height: 10),
-                block(double.infinity, 12),
-                const SizedBox(height: 10),
-                block(120, 12),
-              ],
+        child: PfShimmer(
+          child: ListView.separated(
+            physics: const NeverScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(12),
+            itemCount: 6,
+            separatorBuilder: (_, _) => const SizedBox(height: 10),
+            itemBuilder: (_, i) => Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: pf.surface,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  block(150 + (i % 3) * 30, 16),
+                  const SizedBox(height: 10),
+                  block(double.infinity, 12),
+                  const SizedBox(height: 10),
+                  block(120, 12),
+                ],
+              ),
             ),
           ),
         ),

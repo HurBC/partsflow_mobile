@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:partsflow_mobile/core/ui/pf_haptics.dart';
 import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -99,6 +100,7 @@ class _OrderDetailPageState extends ConsumerState<OrderDetailPage> {
     setState(() => _moving = false);
     switch (r) {
       case Ok(:final value) when value.ok:
+        PfHaptics.success();
         _toast('Pedido #${order.id} movido a ${to.label}', PfToastKind.success);
         final from = order.stage;
         // Mientras llega la cabecera real, la etapa se ve de inmediato.
@@ -110,11 +112,13 @@ class _OrderDetailPageState extends ConsumerState<OrderDetailPage> {
         }
         _refreshOrder();
       case Ok(:final value):
+        PfHaptics.error();
         _toast(
           value.detail ?? 'No pudimos mover el pedido. Intenta de nuevo.',
           PfToastKind.error,
         );
       case Err(:final failure):
+        PfHaptics.error();
         _toast(failureMessage(failure), PfToastKind.error);
     }
   }
