@@ -78,6 +78,17 @@ class ChatRemoteDataSource {
   Future<void> updateClient(String clientId, Map<String, Object?> body) =>
       _dio.patch<Object?>('clients/$clientId/update/', data: body);
 
+  /// Julia atiende YA el mensaje pendiente (SAPI `agents/llm/order_taker/{phone}/`,
+  /// vista síncrona sin timeout de servidor): timeout propio, la UI no espera.
+  Future<void> triggerOrderTaker(String phone) => _dio.post<Object?>(
+    'agents/llm/order_taker/${Uri.encodeComponent(phone)}/',
+    options: Options(
+      // El .timeout del controller (45 s) decide; Dio a 50 s solo libera la conexión.
+      sendTimeout: const Duration(seconds: 50),
+      receiveTimeout: const Duration(seconds: 50),
+    ),
+  );
+
   Future<Object?> supplier(String subsidiaryId) async =>
       (await _dio.get<Object?>('suppliers/$subsidiaryId/')).data;
 
