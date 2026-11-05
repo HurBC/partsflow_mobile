@@ -117,7 +117,15 @@ void main() {
     expect(r.ok, isTrue);
     expect(repo.patches, hasLength(1));
     expect(repo.triggers, ['56911111111']);
-    expect(st().notes.map((n) => n.text), isNot(contains(_warn)));
+    expect(st().notice?.text, isNot(_warn));
+  });
+
+  test('activar y pausar no dejan notas en el hilo', () async {
+    final n = c.read(chatThreadProvider(key()).notifier);
+    expect((await n.setJulia(true)).ok, isTrue);
+    expect((await n.setJulia(false)).ok, isTrue);
+    await settle();
+    expect(st().notes, isEmpty);
   });
 
   test('PATCH falla: no hay POST', () async {
@@ -133,7 +141,7 @@ void main() {
     await c.read(chatThreadProvider(key()).notifier).setJulia(true);
     await settle();
     expect(st().chat.client!.operationMode, 'automatic');
-    expect(st().notes.map((n) => n.text), contains(_warn));
+    expect(st().notice?.text, _warn);
   });
 
   test('desactivar: solo PATCH, sin POST', () async {
@@ -159,8 +167,8 @@ void main() {
       expect(repo.triggers, hasLength(1));
       fa.elapse(const Duration(seconds: 60));
       fa.flushMicrotasks();
-      final notes = k.read(chatThreadProvider(key())).notes.map((n) => n.text);
-      expect(notes, isNot(contains(_warn)));
+      final notice = k.read(chatThreadProvider(key())).notice?.text;
+      expect(notice, isNot(_warn));
       expect(
         k.read(chatThreadProvider(key())).chat.client!.operationMode,
         'automatic',
@@ -177,7 +185,7 @@ void main() {
     cmp.complete(Result.err(Failure.server()));
     await settle();
     expect(st().chat.client!.operationMode, 'manual');
-    expect(st().notes.map((x) => x.text), isNot(contains(_warn)));
+    expect(st().notice?.text, isNot(_warn));
   });
 
   test('on, off, on con POST pendiente: un solo POST', () async {

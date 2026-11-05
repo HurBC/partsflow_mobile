@@ -414,6 +414,9 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
   Widget build(BuildContext context) {
     final pf = PfColors.of(context);
     final key = ChatKey(widget.chat);
+    ref.listen(chatThreadProvider(key).select((s) => s.notice), (prev, next) {
+      if (next != null && !identical(next, prev)) _snack(next.text);
+    });
     _poller.setInterval(
       chatThreadPollEvery(healthy: ref.watch(realtimeProvider)),
     );
