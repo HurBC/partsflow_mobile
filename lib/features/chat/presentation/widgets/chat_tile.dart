@@ -4,6 +4,7 @@ import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/chat_format.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_common.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_list_motion.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/message_ticks.dart';
 
 /// Solo para tests: se invoca en cada build de un [ChatTile] con el id del chat.
@@ -153,10 +154,15 @@ class ChatTile extends StatelessWidget {
                               ),
                             ),
                           ),
-                          if (unread) ...[
-                            const SizedBox(width: 8),
-                            _UnreadBadge(count: chat.unreadCount),
-                          ],
+                          // Siempre montado (ancho 0 si no hay no leídos) para
+                          // que el pop dispare también en 0 -> 1.
+                          SizedBox(width: unread ? 8 : 0),
+                          CountPop(
+                            count: chat.unreadCount,
+                            child: unread
+                                ? _UnreadBadge(count: chat.unreadCount)
+                                : const SizedBox.shrink(),
+                          ),
                         ],
                       ),
                       if (chips.isNotEmpty)
@@ -284,12 +290,15 @@ class _UnreadBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(11),
       ),
       child: count > 0
-          ? Text(
-              count > 99 ? '99+' : '$count',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: pf.onMint,
+          ? SlideUpSwitcher(
+              value: count > 99 ? '99+' : '$count',
+              child: Text(
+                count > 99 ? '99+' : '$count',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: pf.onMint,
+                ),
               ),
             )
           : const SizedBox(width: 6, height: 6),

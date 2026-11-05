@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/action_required_provider.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_common.dart';
+import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_list_motion.dart';
 
 /// Tope de pedidos que muestra el BO ("+50") y que abre su kanban.
 const actionRequiredMaxOrders = 50;
@@ -70,7 +71,7 @@ class ActionRequiredBar extends ConsumerWidget {
   }
 }
 
-class _CardChip extends StatelessWidget {
+class _CardChip extends StatefulWidget {
   const _CardChip({
     super.key,
     required this.card,
@@ -85,50 +86,108 @@ class _CardChip extends StatelessWidget {
   final VoidCallback onDismiss;
 
   @override
+  State<_CardChip> createState() => _CardChipState();
+}
+
+class _CardChipState extends State<_CardChip>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _nudge = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 420),
+  );
+  late final Animation<double> _scale = TweenSequence<double>([
+    TweenSequenceItem(
+      tween: Tween(
+        begin: 1.0,
+        end: 1.08,
+      ).chain(CurveTween(curve: Curves.easeOut)),
+      weight: 45,
+    ),
+    TweenSequenceItem(
+      tween: Tween(
+        begin: 1.08,
+        end: 1.0,
+      ).chain(CurveTween(curve: Curves.easeInOut)),
+      weight: 55,
+    ),
+  ]).animate(_nudge);
+
+  @override
+  void didUpdateWidget(_CardChip old) {
+    super.didUpdateWidget(old);
+    if (widget.count > old.count && !MediaQuery.disableAnimationsOf(context)) {
+      _nudge.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _nudge.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final card = widget.card;
+    final onTap = widget.onTap;
+    final onDismiss = widget.onDismiss;
     final pf = PfColors.of(context);
-    final label = actionCardCountLabel(card, count);
-    return Semantics(
-      container: true,
-      label:
-          '${actionCardTitle(card)}: $label, hace más de 1 hora. Toca para ver.',
-      child: ExcludeSemantics(
-        child: Material(
-          color: pf.warnBg,
-          shape: StadiumBorder(side: BorderSide(color: pf.border)),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              InkWell(
-                customBorder: const StadiumBorder(),
-                onTap: onTap,
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 12, right: 4),
-                  child: Row(
-                    children: [
-                      Icon(_icon(card), size: 16, color: pf.warnFg),
-                      const SizedBox(width: 6),
-                      Text(
-                        '$label ${_short(card)}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: pf.warnFg,
+    final label = actionCardCountLabel(card, widget.count);
+    return ScaleTransition(
+      scale: _scale,
+      child: Semantics(
+        container: true,
+        label:
+            '${actionCardTitle(card)}: $label, hace más de 1 hora. Toca para ver.',
+        child: ExcludeSemantics(
+          child: Material(
+            color: pf.warnBg,
+            shape: StadiumBorder(side: BorderSide(color: pf.border)),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                InkWell(
+                  customBorder: const StadiumBorder(),
+                  onTap: onTap,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 12, right: 4),
+                    child: Row(
+                      children: [
+                        Icon(_icon(card), size: 16, color: pf.warnFg),
+                        const SizedBox(width: 6),
+                        SlideUpSwitcher(
+                          value: label,
+                          child: Text(
+                            label,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: pf.warnFg,
+                            ),
+                          ),
                         ),
-                      ),
-                    ],
+                        Text(
+                          ' ${_short(card)}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: pf.warnFg,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              InkWell(
-                customBorder: const CircleBorder(),
-                onTap: onDismiss,
-                child: Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: Icon(Icons.close, size: 16, color: pf.warnFg),
+                InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: onDismiss,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Icon(Icons.close, size: 16, color: pf.warnFg),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
