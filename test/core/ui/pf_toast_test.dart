@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:partsflow_mobile/core/theme/app_theme.dart';
@@ -36,6 +38,7 @@ Future<void> _out(WidgetTester t) async {
 
 void main() {
   tearDown(PfToast.dismiss);
+  _routeTests();
 
   testWidgets('muestra título y cuerpo', (t) async {
     await t.pumpWidget(_app());
@@ -261,5 +264,183 @@ void main() {
     final screen = t.view.physicalSize / t.view.devicePixelRatio;
     final capsule = find.byKey(const ValueKey('pf-toast-capsule'));
     expect(t.getBottomLeft(capsule).dy, closeTo(screen.height - 30, 1));
+  });
+}
+
+// ---- Pantalla dueña ----------------------------------------------------------
+
+final _nav = GlobalKey<NavigatorState>();
+late BuildContext _page;
+
+Widget _routed({bool tab = true}) => MaterialApp(
+  navigatorKey: _nav,
+  theme: AppTheme.light,
+  home: Scaffold(
+    body: TickerMode(
+      enabled: tab,
+      child: Builder(
+        builder: (c) {
+          _page = c;
+          return const SizedBox.expand();
+        },
+      ),
+    ),
+  ),
+);
+
+Future<void> _push(WidgetTester t, {bool sheet = false}) async {
+  final Future<void> f = sheet
+      ? showModalBottomSheet<void>(
+          context: _page,
+          builder: (_) => const SizedBox(height: 100),
+        )
+      : _nav.currentState!.push(
+          MaterialPageRoute<void>(builder: (_) => const Scaffold()),
+        );
+  unawaited(f);
+  await t.pump();
+  await t.pump(const Duration(milliseconds: 500));
+}
+
+void _routeTests() {
+  testWidgets('pop de la pantalla dueña descarta el aviso', (t) async {
+    await t.pumpWidget(_routed());
+    late BuildContext inner;
+    _nav.currentState!.push(
+      MaterialPageRoute<void>(
+        builder: (c) {
+          inner = c;
+          return const Scaffold();
+        },
+      ),
+    );
+    await t.pump(const Duration(milliseconds: 500));
+    PfToast.show(inner, 'Mío', kind: PfToastKind.loading);
+    await t.pump(const Duration(milliseconds: 600));
+    expect(find.text('Mío'), findsOneWidget);
+    _nav.currentState!.pop();
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 600));
+    expect(find.text('Mío'), findsNothing);
+  });
+
+  testWidgets('push de otra página descarta el aviso', (t) async {
+    await t.pumpWidget(_routed());
+    PfToast.show(_page, 'Aquí', kind: PfToastKind.loading);
+    await t.pump(const Duration(milliseconds: 600));
+    expect(find.text('Aquí'), findsOneWidget);
+    await _push(t);
+    await t.pump(const Duration(milliseconds: 600));
+    expect(find.text('Aquí'), findsNothing);
+  });
+
+  testWidgets('una hoja encima no descarta el aviso', (t) async {
+    await t.pumpWidget(_routed());
+    PfToast.show(_page, 'Sigo', kind: PfToastKind.loading);
+    await t.pump(const Duration(milliseconds: 600));
+    await _push(t, sheet: true);
+    await t.pump(const Duration(milliseconds: 600));
+    expect(find.text('Sigo'), findsOneWidget);
+    _nav.currentState!.pop();
+    await t.pump(const Duration(milliseconds: 600));
+    expect(find.text('Sigo'), findsOneWidget);
+  });
+
+  testWidgets('aviso desde una hoja se descarta si la hoja abre una página', (
+    t,
+  ) async {
+    await t.pumpWidget(_routed());
+    late BuildContext sheetCtx;
+    unawaited(
+      showModalBottomSheet<void>(
+        context: _page,
+        builder: (c) {
+          sheetCtx = c;
+          return const SizedBox(height: 100);
+        },
+      ),
+    );
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 500));
+    PfToast.show(sheetCtx, 'Desde hoja', kind: PfToastKind.loading);
+    await t.pump(const Duration(milliseconds: 600));
+    expect(find.text('Desde hoja'), findsOneWidget);
+    unawaited(
+      _nav.currentState!.push(
+        MaterialPageRoute<void>(builder: (_) => const Scaffold()),
+      ),
+    );
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 600));
+    await t.pump(const Duration(milliseconds: 600));
+    expect(find.text('Desde hoja'), findsNothing);
+  });
+
+  testWidgets('show tras salir de la pantalla no aparece', (t) async {
+    await t.pumpWidget(_routed());
+    late BuildContext inner;
+    _nav.currentState!.push(
+      MaterialPageRoute<void>(
+        builder: (c) {
+          inner = c;
+          return const Scaffold();
+        },
+      ),
+    );
+    await t.pump(const Duration(milliseconds: 500));
+    final target = PfToast.capture(inner)!;
+    _nav.currentState!.pop();
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 600));
+    expect(PfToast.showOn(target, 'Tarde'), isNull);
+    expect(PfToast.show(inner, 'Tarde 2'), isNull);
+    await t.pump(const Duration(milliseconds: 600));
+    expect(find.text('Tarde'), findsNothing);
+  });
+
+  testWidgets('showOn con destino capturado de página cubierta no aparece', (
+    t,
+  ) async {
+    await t.pumpWidget(_routed());
+    final target = PfToast.capture(_page)!;
+    await _push(t);
+    expect(PfToast.showOn(target, 'Oculto'), isNull);
+  });
+
+  testWidgets('pestaña oculta: no se muestra; al ocultarse se descarta', (
+    t,
+  ) async {
+    late StateSetter set;
+    var tab = true;
+    await t.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light,
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (c, s) {
+              set = s;
+              return TickerMode(
+                enabled: tab,
+                child: Builder(
+                  builder: (c2) {
+                    _page = c2;
+                    return const SizedBox.expand();
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    final target = PfToast.capture(_page)!;
+    PfToast.showOn(target, 'Pestaña', kind: PfToastKind.loading);
+    await t.pump(const Duration(milliseconds: 600));
+    expect(find.text('Pestaña'), findsOneWidget);
+    set(() => tab = false);
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 600));
+    expect(find.text('Pestaña'), findsNothing);
+    expect(PfToast.showOn(target, 'Otra'), isNull);
   });
 }

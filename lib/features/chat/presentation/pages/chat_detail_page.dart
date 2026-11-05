@@ -209,17 +209,23 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     } else {
       PfHaptics.light();
     }
-    final r = await ref
+    // Optimista: el hilo y la lista cambian ya; el aviso sale sin esperar red.
+    final result = ref
         .read(chatThreadProvider(ChatKey(widget.chat)).notifier)
         .setJulia(!current);
+    if (!current) {
+      _toast('Julia activada', kind: PfToastKind.julia);
+    } else {
+      _toast(
+        'Julia en pausa',
+        kind: PfToastKind.info,
+        icon: Icons.pause_rounded,
+      );
+    }
+    final r = await result;
     if (!r.ok) {
       _celebrateJulia = false;
-      return _toastResult(r);
-    }
-    if (!current) {
-      _toast(r.message, kind: PfToastKind.julia);
-    } else {
-      _toast(r.message, kind: PfToastKind.info, icon: Icons.pause_rounded);
+      if (mounted) _toastResult(r);
     }
   }
 
@@ -947,7 +953,10 @@ class _Header extends StatelessWidget {
                     constraints: const BoxConstraints(minHeight: 44),
                     alignment: Alignment.center,
                     padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: JuliaPill(julia: julia, consumeCelebrate: onConsumeCelebrate),
+                    child: JuliaPill(
+                      julia: julia,
+                      consumeCelebrate: onConsumeCelebrate,
+                    ),
                   ),
                 ),
               ),

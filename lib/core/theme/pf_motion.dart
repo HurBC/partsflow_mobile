@@ -3,11 +3,16 @@ import 'package:flutter/animation.dart';
 /// Duraciones y curvas de movimiento reutilizables.
 abstract class PfMotion {
   // Aviso (PfToast).
-  static const toastEnter = Duration(milliseconds: 480);
-  static const toastExit = Duration(milliseconds: 220);
-  static const toastChipPop = Duration(milliseconds: 440);
-  static const toastChipDelay = Duration(milliseconds: 110);
-  static const toastIconDelay = Duration(milliseconds: 300);
+  static const toastEnter = Duration(milliseconds: 300);
+  static const toastExit = Duration(milliseconds: 160);
+  static const toastChipPop = Duration(milliseconds: 280);
+  static const toastChipDelay = Duration(milliseconds: 40);
+  static const toastIconDelay = Duration(milliseconds: 140);
+  static const toastIconJulia = Duration(milliseconds: 520);
+  static const toastIconCheck = Duration(milliseconds: 240);
+  static const toastIconShake = Duration(milliseconds: 400);
+  static const toastIconPulse = Duration(milliseconds: 420);
+  static const toastIconInfo = Duration(milliseconds: 300);
 
   // Toggle de Julia (PfSwitch / píldora / indicador).
   static const switchKnob = Duration(milliseconds: 340);

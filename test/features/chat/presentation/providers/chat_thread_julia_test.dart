@@ -23,6 +23,7 @@ import '../../_fixtures.dart';
 class _Repo implements ChatRepository {
   Result<bool> patchResult = Result.ok(true);
   Future<Result<bool>> Function(String phone)? onTrigger;
+  Future<Result<bool>> Function(Map<String, Object?> f)? onPatch;
   final patches = <Map<String, Object?>>[];
   final triggers = <String>[];
 
@@ -43,7 +44,7 @@ class _Repo implements ChatRepository {
     Map<String, Object?> fields,
   ) async {
     patches.add(fields);
-    return patchResult;
+    return onPatch?.call(fields) ?? patchResult;
   }
 
   @override
@@ -58,16 +59,22 @@ class _Repo implements ChatRepository {
 }
 
 class _FakeRealtime extends Realtime {
+  static StreamController<RealtimeEvent> rt = StreamController.broadcast();
   @override
-  Stream<RealtimeEvent> get events => const Stream.empty();
+  Stream<RealtimeEvent> get events => rt.stream;
   @override
   bool build() => false;
 }
 
+Chat _listChat = chat('56911111111');
+
 class _Ctl extends ChatListController {
   @override
-  ChatListState build() =>
-      const ChatListState(tab: ChatTab.all, status: ListStatus.data);
+  ChatListState build() => ChatListState(
+    tab: ChatTab.all,
+    status: ListStatus.data,
+    items: [_listChat],
+  );
 
   @override
   Future<void> poll() async {}
@@ -104,6 +111,8 @@ void main() {
   }
 
   setUp(() async {
+    _listChat = theChat;
+    _FakeRealtime.rt = StreamController.broadcast();
     repo = _Repo();
     c = make();
     await settle();
@@ -142,6 +151,163 @@ void main() {
     expect(st().notice?.text, _warn);
     expect(st().notice?.kind, ThreadNoticeKind.warning);
     expect(st().notice?.action, ThreadNoticeAction.retryJulia);
+  });
+
+  group('optimista', () {
+    String mode() => st().chat.client!.operationMode!;
+
+    test('se aplica al instante, antes de la red', () async {
+      final cmp = Completer<Result<bool>>();
+      repo.onPatch = (_) => cmp.future;
+      final f = c.read(chatThreadProvider(key()).notifier).setJulia(true);
+      expect(mode(), 'automatic');
+      expect(st().chat.client!.juliaOn, isTrue);
+      expect(repo.triggers, isEmpty);
+      cmp.complete(Result.ok(true));
+      expect((await f).ok, isTrue);
+      await settle();
+      expect(mode(), 'automatic');
+      expect(repo.triggers, hasLength(1));
+    });
+
+    test('fallo: revierte y devuelve el error; sin order_taker', () async {
+      repo.patchResult = Result.err(Failure.server());
+      final r = await c.read(chatThreadProvider(key()).notifier).setJulia(true);
+      await settle();
+      expect(r.ok, isFalse);
+      expect(r.message, isNotEmpty);
+      expect(mode(), 'manual');
+      expect(st().chat.client!.juliaOn, isFalse);
+      expect(repo.triggers, isEmpty);
+    });
+
+    test('toque posterior: no revierte lo que el usuario ya cambió', () async {
+      final first = Completer<Result<bool>>();
+      var n = 0;
+      repo.onPatch = (_) =>
+          n++ == 0 ? first.future : Future.value(Result.ok(true));
+      final ctl = c.read(chatThreadProvider(key()).notifier);
+      final a = ctl.setJulia(true);
+      final b = ctl.setJulia(false);
+      expect(mode(), 'manual');
+      first.complete(Result.err(Failure.server()));
+      expect((await a).ok, isTrue); // superado: sin error que mostrar
+      expect((await b).ok, isTrue);
+      await settle();
+      expect(mode(), 'manual');
+      expect(repo.triggers, isEmpty);
+    });
+
+    test('coalescencia on/off/on: <= 2 PATCH y el último deja ON', () async {
+      final first = Completer<Result<bool>>();
+      var n = 0;
+      repo.onPatch = (_) =>
+          n++ == 0 ? first.future : Future.value(Result.ok(true));
+      final ctl = c.read(chatThreadProvider(key()).notifier);
+      final a = ctl.setJulia(true);
+      final b = ctl.setJulia(false);
+      final d = ctl.setJulia(true);
+      await settle();
+      expect(repo.patches, hasLength(1)); // nunca dos en vuelo
+      first.complete(Result.ok(true));
+      await Future.wait([a, b, d]);
+      await settle();
+      expect(repo.patches.length, lessThanOrEqualTo(2));
+      expect(repo.patches.last['operation_mode'], 'automatic');
+      expect(mode(), 'automatic');
+      expect(repo.triggers, hasLength(1));
+    });
+
+    test('order_taker solo tras PATCH OK con valor aún ON', () async {
+      final first = Completer<Result<bool>>();
+      var n = 0;
+      repo.onPatch = (_) =>
+          n++ == 0 ? first.future : Future.value(Result.ok(true));
+      final ctl = c.read(chatThreadProvider(key()).notifier);
+      final a = ctl.setJulia(true);
+      final b = ctl.setJulia(false);
+      first.complete(Result.ok(true));
+      await Future.wait([a, b]);
+      await settle();
+      expect(repo.patches, hasLength(2));
+      expect(mode(), 'manual');
+      expect(repo.triggers, isEmpty);
+    });
+  });
+
+  group('robustez', () {
+    String listMode(ProviderContainer k) =>
+        k.read(chatListControllerProvider).items.single.client!.operationMode!;
+
+    test('fallo tras desmontar: revierte la entrada de la lista', () async {
+      final gate = Completer<Result<bool>>();
+      repo.onPatch = (_) => gate.future;
+      final k = ProviderContainer(
+        overrides: [
+          chatRepositoryProvider.overrideWithValue(repo),
+          realtimeProvider.overrideWith(_FakeRealtime.new),
+          chatListControllerProvider.overrideWith(_Ctl.new),
+          apiUserProvider.overrideWith((_) async => null),
+        ],
+      );
+      addTearDown(k.dispose);
+      final sub = k.listen(chatThreadProvider(key()), (_, _) {});
+      await settle();
+      unawaited(k.read(chatThreadProvider(key()).notifier).setJulia(true));
+      expect(listMode(k), 'automatic');
+      sub.close();
+      await settle();
+      gate.complete(Result.err(Failure.server()));
+      await settle();
+      expect(listMode(k), 'manual');
+      expect(repo.triggers, isEmpty);
+    });
+
+    test('on -> off y desmontar al instante: igual se envía OFF', () async {
+      final first = Completer<Result<bool>>();
+      var n = 0;
+      repo.onPatch = (_) =>
+          n++ == 0 ? first.future : Future.value(Result.ok(true));
+      final k = ProviderContainer(
+        overrides: [
+          chatRepositoryProvider.overrideWithValue(repo),
+          realtimeProvider.overrideWith(_FakeRealtime.new),
+          chatListControllerProvider.overrideWith(_Ctl.new),
+          apiUserProvider.overrideWith((_) async => null),
+        ],
+      );
+      addTearDown(k.dispose);
+      final sub = k.listen(chatThreadProvider(key()), (_, _) {});
+      await settle();
+      final ctl = k.read(chatThreadProvider(key()).notifier);
+      unawaited(ctl.setJulia(true));
+      unawaited(ctl.setJulia(false));
+      sub.close();
+      await settle();
+      first.complete(Result.ok(true));
+      await settle();
+      expect(repo.patches, hasLength(2));
+      expect(repo.patches.last['operation_mode'], 'manual');
+      expect(repo.triggers, isEmpty);
+    });
+
+    test('cambio por realtime durante un PATCH que falla no se pisa', () async {
+      final gate = Completer<Result<bool>>();
+      repo.onPatch = (_) => gate.future;
+      final f = c.read(chatThreadProvider(key()).notifier).setJulia(true);
+      _FakeRealtime.rt.add(
+        const RealtimeClientChanged('client', {
+          'id': 'c1',
+          'operation_mode': 'automatic',
+          'is_ai_active': true,
+        }),
+      );
+      await settle();
+      gate.complete(Result.err(Failure.server()));
+      expect((await f).ok, isFalse);
+      await settle();
+      expect(st().chat.client!.operationMode, 'automatic');
+    });
   });
 
   group('retryOrderTaker', () {

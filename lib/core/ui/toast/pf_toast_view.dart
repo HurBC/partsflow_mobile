@@ -41,8 +41,13 @@ class PfToastView extends StatefulWidget {
   State<PfToastView> createState() => _PfToastViewState();
 }
 
-// Línea de tiempo maestra (ms): entrada 480, chip 110..550, ícono 300..1120.
-const _totalMs = 1200.0;
+// Línea de tiempo maestra (ms): entrada 300, chip 40..320, ícono 140..660.
+final _enterMs = PfMotion.toastEnter.inMilliseconds.toDouble();
+final _chipFrom = PfMotion.toastChipDelay.inMilliseconds.toDouble();
+final _chipTo = _chipFrom + PfMotion.toastChipPop.inMilliseconds;
+final _iconFrom = PfMotion.toastIconDelay.inMilliseconds.toDouble();
+double _iconTo(Duration d) => _iconFrom + d.inMilliseconds;
+const _totalMs = 700.0;
 
 double _at(double ms) => ms / _totalMs;
 
@@ -50,7 +55,7 @@ class _PfToastViewState extends State<PfToastView>
     with TickerProviderStateMixin {
   late final AnimationController _master = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 1200),
+    duration: const Duration(milliseconds: 700),
   );
   late final AnimationController _exit = AnimationController(vsync: this);
   AnimationController? _timer;
@@ -83,7 +88,7 @@ class _PfToastViewState extends State<PfToastView>
     _reduced = MediaQuery.disableAnimationsOf(context);
     _master.duration = _reduced
         ? PfMotion.reducedFade
-        : const Duration(milliseconds: 1200);
+        : const Duration(milliseconds: 700);
     _exit.duration = _reduced ? PfMotion.reducedFade : PfMotion.toastExit;
     _master.forward();
     _timer?.forward();
@@ -148,14 +153,14 @@ class _PfToastViewState extends State<PfToastView>
     final capsule = AnimatedBuilder(
       animation: Listenable.merge([_master, _exit]),
       builder: (context, child) {
-        final enter = _seg(0, 480, PfMotion.overshoot);
+        final enter = _seg(0, _enterMs, PfMotion.overshoot);
         var dy = 0.0, scale = 1.0, opacity = 1.0;
         if (_reduced) {
           opacity = _master.value * (1 - _exit.value);
         } else {
           dy = 44 * (1 - enter);
           scale = .86 + .14 * enter;
-          opacity = _seg(0, 480 * .55).clamp(0.0, 1.0);
+          opacity = _seg(0, _enterMs * .55).clamp(0.0, 1.0);
           final o = Curves.easeIn.transform(_exit.value);
           dy += 18 * o;
           scale *= 1 - .06 * o;
@@ -407,7 +412,7 @@ class _AnimatedChip extends StatelessWidget {
     return AnimatedBuilder(
       animation: state._master,
       builder: (context, _) {
-        final pop = state._seg(110, 550, PfMotion.overshoot);
+        final pop = state._seg(_chipFrom, _chipTo, PfMotion.overshoot);
         return Transform.rotate(
           angle: -40 * math.pi / 180 * (1 - pop),
           child: Transform.scale(
@@ -455,12 +460,16 @@ class _AnimatedChip extends StatelessWidget {
         return CustomPaint(
           size: const Size(20, 20),
           painter: _CheckPainter(
-            progress: state._seg(300, 660, Curves.easeOut),
+            progress: state._seg(
+              _iconFrom,
+              _iconTo(PfMotion.toastIconCheck),
+              Curves.easeOut,
+            ),
             color: color,
           ),
         );
       case PfToastKind.julia:
-        final t = state._seg(300, 1120);
+        final t = state._seg(_iconFrom, _iconTo(PfMotion.toastIconJulia));
         final r = _seq([-60, 12, 0], t) * rad;
         final s = _seq([.5, 1.2, 1], t);
         if (state._reduced) return glyph(icon ?? Icons.auto_awesome_rounded);
@@ -472,7 +481,7 @@ class _AnimatedChip extends StatelessWidget {
           ),
         );
       case PfToastKind.warning:
-        final t = state._seg(300, 860);
+        final t = state._seg(_iconFrom, _iconTo(PfMotion.toastIconShake));
         final r = state._reduced ? 0.0 : _seq([0, -14, 11, -7, 3, 0], t) * rad;
         return Transform.rotate(
           angle: r,
@@ -480,14 +489,14 @@ class _AnimatedChip extends StatelessWidget {
           child: glyph(icon ?? Icons.warning_amber_rounded),
         );
       case PfToastKind.error:
-        final t = state._seg(300, 920);
+        final t = state._seg(_iconFrom, _iconTo(PfMotion.toastIconPulse));
         final s = state._reduced ? 1.0 : _seq([1, 1.28, 1], t);
         return Transform.scale(
           scale: s,
           child: glyph(icon ?? Icons.error_outline_rounded),
         );
       case PfToastKind.info:
-        final t = state._seg(300, 600);
+        final t = state._seg(_iconFrom, _iconTo(PfMotion.toastIconInfo));
         return Opacity(
           opacity: t.clamp(0.0, 1.0),
           child: glyph(icon ?? Icons.info_outline_rounded),

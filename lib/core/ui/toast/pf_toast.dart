@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:partsflow_mobile/core/ui/toast/pf_toast_owner.dart';
 import 'package:partsflow_mobile/core/ui/toast/pf_toast_scope.dart';
 import 'package:partsflow_mobile/core/ui/toast/pf_toast_view.dart';
 
@@ -6,14 +7,16 @@ export 'package:partsflow_mobile/core/ui/toast/pf_toast_scope.dart';
 
 enum PfToastKind { success, julia, info, warning, error, loading }
 
-/// Destino de un aviso que no necesita un BuildContext vivo: el overlay raíz y
-/// la separación inferior capturados antes de un await/pop.
+/// Destino de un aviso que no necesita un BuildContext vivo: el overlay raíz,
+/// la separación inferior y la pantalla dueña, capturados antes de un await/pop.
+/// Sin [owner] el aviso no pertenece a ninguna pantalla (siempre visible).
 @immutable
 class PfToastTarget {
-  const PfToastTarget(this.overlay, this.bottomClearance);
+  const PfToastTarget(this.overlay, this.bottomClearance, [this.owner]);
 
   final OverlayState overlay;
   final double bottomClearance;
+  final PfToastOwner? owner;
 }
 
 /// Identifica un aviso mostrado (para cerrarlo solo si sigue vigente).
@@ -23,10 +26,13 @@ class PfToastHandle {
   late final OverlayEntry _entry;
   VoidCallback? _animateOut;
   bool _removed = false;
+  VoidCallback? _unwatch;
 
   void _remove() {
     if (_removed) return;
     _removed = true;
+    _unwatch?.call();
+    _unwatch = null;
     if (identical(PfToast._active, this)) PfToast._active = null;
     _entry.remove(); // no-op si el overlay ya no lo tiene (no usar `mounted`)
     _entry.dispose();
@@ -40,24 +46,29 @@ abstract final class PfToast {
   static Duration? _autoClose(PfToastKind kind, String? actionLabel) {
     if (actionLabel != null) return null;
     return switch (kind) {
-      PfToastKind.success || PfToastKind.julia => const Duration(seconds: 3),
-      PfToastKind.info => const Duration(seconds: 4),
-      PfToastKind.warning || PfToastKind.error => const Duration(seconds: 6),
+      PfToastKind.success ||
+      PfToastKind.julia => const Duration(milliseconds: 2200),
+      PfToastKind.info => const Duration(seconds: 3),
+      PfToastKind.warning => const Duration(milliseconds: 4500),
+      PfToastKind.error => const Duration(seconds: 5),
       PfToastKind.loading => null,
     };
   }
 
-  /// Captura overlay raíz + separación inferior (scope o [bottomClearance]).
+  /// Captura overlay raíz + separación inferior (scope o [bottomClearance]) +
+  /// pantalla dueña (la ruta desde la que se muestra).
   /// Null si no hay overlay.
   static PfToastTarget? capture(
     BuildContext context, {
     double? bottomClearance,
   }) {
+    if (!context.mounted) return null;
     final overlay = Overlay.maybeOf(context, rootOverlay: true);
     if (overlay == null) return null;
     return PfToastTarget(
       overlay,
       bottomClearance ?? PfToastScope.clearanceOf(context),
+      PfToastOwner.of(context),
     );
   }
 
@@ -102,6 +113,8 @@ abstract final class PfToast {
     Duration? duration,
   }) {
     if (title.isEmpty || !target.overlay.mounted) return null;
+    // La pantalla dueña ya se cerró o quedó cubierta/oculta: no se muestra.
+    if (!(target.owner?.visible ?? true)) return null;
     final auto = actionLabel != null || kind == PfToastKind.loading
         ? null
         : (duration ?? _autoClose(kind, actionLabel));
@@ -125,6 +138,9 @@ abstract final class PfToast {
     );
     _active = handle;
     target.overlay.insert(handle._entry);
+    handle._unwatch = target.owner?.watch(() {
+      if (!(target.owner?.visible ?? true)) dismissIfCurrent(handle);
+    });
     return handle;
   }
 
