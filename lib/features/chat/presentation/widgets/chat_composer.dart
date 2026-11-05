@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
@@ -90,11 +91,9 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
     super.dispose();
   }
 
-  void _snack(String text) {
+  void _toast(String text, {PfToastKind kind = PfToastKind.error}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(text)));
+    PfToast.show(context, text, kind: kind);
   }
 
   void _submit() {
@@ -179,7 +178,7 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       ]);
     } catch (e) {
       pfLog('adjuntar/camera falló: ${truncateLog(e)}');
-      _snack('No se pudo abrir la cámara: ${shortError(e)}');
+      _toast('No se pudo abrir la cámara: ${shortError(e)}');
     }
   }
 
@@ -205,7 +204,7 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       await _preview(files);
     } catch (e) {
       pfLog('adjuntar/gallery falló: ${truncateLog(e)}');
-      _snack('No se pudo abrir la galería: ${shortError(e)}');
+      _toast('No se pudo abrir la galería: ${shortError(e)}');
     }
   }
 
@@ -222,7 +221,7 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       await _preview(files);
     } catch (e) {
       pfLog('adjuntar/files falló: ${truncateLog(e)}');
-      _snack('No se pudo abrir el selector de archivos: ${shortError(e)}');
+      _toast('No se pudo abrir el selector de archivos: ${shortError(e)}');
     }
   }
 
@@ -243,16 +242,20 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       }
     }
     if (tooBig.isNotEmpty) {
-      _snack(
+      _toast(
         tooBig.length == 1
             ? '«${tooBig.first}» pesa más de 16 MB y no se puede enviar'
             : '${tooBig.length} archivos pesan más de 16 MB y no se enviarán',
+        kind: PfToastKind.warning,
       );
     }
     var batch = ok;
     if (batch.length > ChatThread.maxBatch) {
       batch = batch.sublist(0, ChatThread.maxBatch);
-      _snack('Máximo ${ChatThread.maxBatch} archivos por envío');
+      _toast(
+        'Máximo ${ChatThread.maxBatch} archivos por envío',
+        kind: PfToastKind.warning,
+      );
     }
     if (batch.isEmpty) return false;
     final res = await showAttachmentPreview(
@@ -278,7 +281,7 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
     try {
       final bytes = content.data;
       if (bytes == null || bytes.isEmpty) {
-        _snack('No se pudo leer la imagen del teclado');
+        _toast('No se pudo leer la imagen del teclado');
         return;
       }
       final ext = switch (content.mimeType) {
@@ -305,7 +308,7 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       }
     } catch (e) {
       pfLog('adjuntar/teclado falló: ${truncateLog(e)}');
-      _snack('No se pudo adjuntar la imagen: ${shortError(e)}');
+      _toast('No se pudo adjuntar la imagen: ${shortError(e)}');
     }
   }
 
@@ -331,7 +334,7 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       };
       if (bytes == null || bytes.isEmpty) {
         // Sin imagen, al menos el texto.
-        _snack('No se pudo descargar la imagen de la respuesta');
+        _toast('No se pudo descargar la imagen de la respuesta');
         if (msg.isNotEmpty) _insertText(msg, replaceAll: fromSlash);
         return;
       }
@@ -403,7 +406,7 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       pfLog(
         'record: start falló: ${truncateLog(e)}\n${truncateLog(st, max: 400)}',
       );
-      _snack('No se pudo grabar: ${shortError(e)}');
+      _toast('No se pudo grabar: ${shortError(e)}');
     }
   }
 
@@ -463,7 +466,10 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       if (!mounted) return;
       setState(() => _recording = false);
       if (path == null || seconds < 1) {
-        _snack('Audio muy corto. Mantén la grabación al menos un segundo');
+        _toast(
+          'Audio muy corto. Mantén la grabación al menos un segundo',
+          kind: PfToastKind.warning,
+        );
         return;
       }
       final file = File(path);
@@ -475,7 +481,7 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
         'name=${path.split('/').last}',
       );
       if (!exists || size == 0) {
-        _snack(
+        _toast(
           'No se pudo grabar: el archivo de audio quedó '
           '${exists ? 'vacío' : 'sin crear'}',
         );
@@ -500,7 +506,7 @@ class _ChatComposerState extends ConsumerState<ChatComposer> {
       );
       if (mounted) {
         setState(() => _recording = false);
-        _snack('No se pudo grabar: ${shortError(e)}');
+        _toast('No se pudo grabar: ${shortError(e)}');
       }
     } finally {
       _stopping = false;

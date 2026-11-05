@@ -73,9 +73,7 @@ class _Ctl extends ChatListController {
   Future<void> poll() async {}
 }
 
-const _warn =
-    'Julia quedó activa, pero no pudo atender ahora; responderá cuando el '
-    'cliente vuelva a escribir.';
+const _warn = 'Julia no pudo atender';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -142,6 +140,68 @@ void main() {
     await settle();
     expect(st().chat.client!.operationMode, 'automatic');
     expect(st().notice?.text, _warn);
+    expect(st().notice?.kind, ThreadNoticeKind.warning);
+    expect(st().notice?.action, ThreadNoticeAction.retryJulia);
+  });
+
+  group('retryOrderTaker', () {
+    test('solo reintenta si el chat sigue en automatic', () async {
+      final n = c.read(chatThreadProvider(key()).notifier);
+      expect(await n.retryOrderTaker(), OrderTakerOutcome.skipped);
+      expect(repo.triggers, isEmpty);
+    });
+
+    test('OK: un POST y sin aviso nuevo', () async {
+      final n = c.read(chatThreadProvider(key()).notifier);
+      await n.setJulia(true);
+      await settle();
+      expect(repo.triggers, hasLength(1));
+      expect(await n.retryOrderTaker(), OrderTakerOutcome.ok);
+      expect(repo.triggers, hasLength(2));
+      expect(st().notice?.text, isNot(_warn));
+    });
+
+    test('Err: vuelve a emitir el aviso con Reintentar', () async {
+      final n = c.read(chatThreadProvider(key()).notifier);
+      await n.setJulia(true);
+      await settle();
+      repo.onTrigger = (_) async => Result.err(Failure.server());
+      final before = st().notice;
+      expect(await n.retryOrderTaker(), OrderTakerOutcome.failed);
+      expect(st().notice, isNot(same(before)));
+      expect(st().notice?.action, ThreadNoticeAction.retryJulia);
+    });
+
+    test('respeta la petición en curso (guard in-flight)', () async {
+      final cmp = Completer<Result<bool>>();
+      repo.onTrigger = (_) => cmp.future;
+      final n = c.read(chatThreadProvider(key()).notifier);
+      await n.setJulia(true);
+      expect(await n.retryOrderTaker(), OrderTakerOutcome.busy);
+      expect(repo.triggers, hasLength(1));
+      cmp.complete(Result.ok(true));
+      await settle();
+    });
+
+    test('timeout: sin aviso', () {
+      fakeAsync((fa) {
+        late ProviderContainer k;
+        k = make();
+        fa.flushMicrotasks();
+        final n = k.read(chatThreadProvider(key()).notifier);
+        n.setJulia(true);
+        fa.flushMicrotasks();
+        repo.onTrigger = (_) => Completer<Result<bool>>().future;
+        fa.elapse(const Duration(seconds: 1));
+        OrderTakerOutcome? out;
+        n.retryOrderTaker().then((v) => out = v);
+        fa.flushMicrotasks();
+        fa.elapse(const Duration(seconds: 60));
+        fa.flushMicrotasks();
+        expect(out, OrderTakerOutcome.timeout);
+        expect(k.read(chatThreadProvider(key())).notice?.text, isNot(_warn));
+      });
+    });
   });
 
   test('desactivar: solo PATCH, sin POST', () async {

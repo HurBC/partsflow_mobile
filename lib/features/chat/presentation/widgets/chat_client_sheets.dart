@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:partsflow_mobile/core/errors/failure.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
@@ -35,8 +36,19 @@ Future<void> showClientTagsSheet(BuildContext context, Chat chat) =>
 Future<void> showClientIssuesSheet(BuildContext context, Chat chat) =>
     _show(context, _IssuesSheet(chat: chat));
 
-Future<void> showClientReminderSheet(BuildContext context, Chat chat) =>
-    _show(context, _ReminderSheet(chat: chat));
+/// [successTarget]: dónde mostrar "Recordatorio creado" al cerrar la hoja
+/// (por defecto, sobre la página que la abre, capturado antes de abrirla).
+Future<void> showClientReminderSheet(
+  BuildContext context,
+  Chat chat, {
+  PfToastTarget? successTarget,
+}) => _show(
+  context,
+  _ReminderSheet(
+    chat: chat,
+    successTarget: successTarget ?? PfToast.capture(context),
+  ),
+);
 
 String _stamp(DateTime? d) {
   if (d == null) return '';
@@ -44,18 +56,11 @@ String _stamp(DateTime? d) {
   return '${dayLabel(l)}, ${hm(l)}';
 }
 
-/// Marco común: título, SnackBars propios (la hoja tapa al Scaffold de la
-/// página) y altura fija que sube con el teclado.
+/// Marco común: título y altura fija que sube con el teclado.
 class _Frame extends StatelessWidget {
-  const _Frame({
-    required this.title,
-    required this.messenger,
-    required this.child,
-    this.height = 0.8,
-  });
+  const _Frame({required this.title, required this.child, this.height = 0.8});
 
   final String title;
-  final GlobalKey<ScaffoldMessengerState> messenger;
   final Widget child;
   final double height;
 
@@ -66,28 +71,25 @@ class _Frame extends StatelessWidget {
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: SizedBox(
         height: MediaQuery.sizeOf(context).height * height,
-        child: ScaffoldMessenger(
-          key: messenger,
-          child: Scaffold(
-            backgroundColor: Colors.transparent,
-            body: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                  child: Semantics(
-                    header: true,
-                    child: Text(
-                      title,
-                      style: Theme.of(
-                        context,
-                      ).textTheme.titleLarge?.copyWith(color: pf.text),
-                    ),
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Semantics(
+                  header: true,
+                  child: Text(
+                    title,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.titleLarge?.copyWith(color: pf.text),
                   ),
                 ),
-                Expanded(child: child),
-              ],
-            ),
+              ),
+              Expanded(child: child),
+            ],
           ),
         ),
       ),
@@ -95,23 +97,17 @@ class _Frame extends StatelessWidget {
   }
 }
 
-void _snack(
-  GlobalKey<ScaffoldMessengerState> key,
-  String text, {
-  bool error = false,
-}) {
-  final m = key.currentState;
-  if (m == null) return;
-  m
-    ..hideCurrentSnackBar()
-    ..showSnackBar(
-      SnackBar(
-        content: Text(text),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: error ? const Color(0xFF9F1D1D) : null,
-      ),
+/// Separación de los avisos sobre una hoja: deja libre su botón inferior
+/// (52 + márgenes) + 8; la safe area la suma el aviso.
+const kSheetToastClearance = 84.0;
+
+void _toast(BuildContext context, String text, {bool error = false}) =>
+    PfToast.show(
+      context,
+      text,
+      kind: error ? PfToastKind.error : PfToastKind.success,
+      bottomClearance: kSheetToastClearance,
     );
-}
 
 String _failText(Failure failure) =>
     failureMessage(failure).startsWith('Sin conexión')
@@ -168,7 +164,6 @@ class _NotesSheet extends ConsumerStatefulWidget {
 }
 
 class _NotesSheetState extends ConsumerState<_NotesSheet> {
-  final _msg = GlobalKey<ScaffoldMessengerState>();
   final _input = TextEditingController();
   List<ClientNote>? _notes;
   bool _loadFailed = false;
@@ -218,7 +213,7 @@ class _NotesSheetState extends ConsumerState<_NotesSheet> {
     final me = await ref.read(apiUserProvider.future);
     if (!mounted) return;
     if (me == null) {
-      _snack(_msg, 'No pudimos identificar tu usuario', error: true);
+      _toast(context, 'No pudimos identificar tu usuario', error: true);
       return;
     }
     setState(() => _saving = true);
@@ -230,10 +225,10 @@ class _NotesSheetState extends ConsumerState<_NotesSheet> {
     switch (r) {
       case Ok():
         _input.clear();
-        _snack(_msg, 'Nota agregada');
+        _toast(context, 'Nota agregada');
         _load();
       case Err(:final failure):
-        _snack(_msg, _failText(failure), error: true);
+        _toast(context, _failText(failure), error: true);
     }
   }
 
@@ -265,9 +260,9 @@ class _NotesSheetState extends ConsumerState<_NotesSheet> {
     switch (r) {
       case Ok():
         setState(() => _notes = _notes?.where((x) => x.id != n.id).toList());
-        _snack(_msg, 'Nota eliminada');
+        _toast(context, 'Nota eliminada');
       case Err(:final failure):
-        _snack(_msg, _failText(failure), error: true);
+        _toast(context, _failText(failure), error: true);
     }
   }
 
@@ -281,7 +276,6 @@ class _NotesSheetState extends ConsumerState<_NotesSheet> {
     final notes = _notes;
     return _Frame(
       title: 'Notas del cliente',
-      messenger: _msg,
       child: Column(
         children: [
           Expanded(
@@ -412,7 +406,6 @@ class _TagsSheet extends ConsumerStatefulWidget {
 }
 
 class _TagsSheetState extends ConsumerState<_TagsSheet> {
-  final _msg = GlobalKey<ScaffoldMessengerState>();
   List<ClientTag>? _all;
   Set<String> _assigned = {};
   final _busy = <String>{};
@@ -477,8 +470,8 @@ class _TagsSheetState extends ConsumerState<_TagsSheet> {
       case Ok():
         _publish();
       case Err(:final failure):
-        _snack(
-          _msg,
+        _toast(
+          context,
           'No se pudo ${wasOn ? 'quitar' : 'asignar'} la etiqueta "${t.name}". ${_failText(failure)}',
           error: true,
         );
@@ -492,7 +485,6 @@ class _TagsSheetState extends ConsumerState<_TagsSheet> {
     final all = _all;
     return _Frame(
       title: 'Etiquetas',
-      messenger: _msg,
       child: _failed
           ? _Retry(onRetry: _load)
           : all == null
@@ -576,7 +568,6 @@ class _IssuesSheet extends ConsumerStatefulWidget {
 }
 
 class _IssuesSheetState extends ConsumerState<_IssuesSheet> {
-  final _msg = GlobalKey<ScaffoldMessengerState>();
   final _comment = TextEditingController();
   List<ClientIssue>? _issues;
   bool _failed = false;
@@ -631,11 +622,11 @@ class _IssuesSheetState extends ConsumerState<_IssuesSheet> {
       case Ok():
         _comment.clear();
         setState(() => _type = 'other');
-        _snack(_msg, 'Problema registrado');
+        _toast(context, 'Problema registrado');
         await _load();
         if (mounted) _publish();
       case Err(:final failure):
-        _snack(_msg, _failText(failure), error: true);
+        _toast(context, _failText(failure), error: true);
     }
   }
 
@@ -647,10 +638,10 @@ class _IssuesSheetState extends ConsumerState<_IssuesSheet> {
     switch (r) {
       case Ok():
         setState(() => _issues = _issues?.where((x) => x.id != i.id).toList());
-        _snack(_msg, 'Problema resuelto');
+        _toast(context, 'Problema resuelto');
         _publish();
       case Err(:final failure):
-        _snack(_msg, _failText(failure), error: true);
+        _toast(context, _failText(failure), error: true);
     }
   }
 
@@ -661,7 +652,6 @@ class _IssuesSheetState extends ConsumerState<_IssuesSheet> {
     final issues = _issues;
     return _Frame(
       title: 'Registrar problema',
-      messenger: _msg,
       height: 0.9,
       child: _failed
           ? _Retry(onRetry: _load)
@@ -810,16 +800,16 @@ const _customUnits = <(String, String)>[
 ];
 
 class _ReminderSheet extends ConsumerStatefulWidget {
-  const _ReminderSheet({required this.chat});
+  const _ReminderSheet({required this.chat, this.successTarget});
 
   final Chat chat;
+  final PfToastTarget? successTarget;
 
   @override
   ConsumerState<_ReminderSheet> createState() => _ReminderSheetState();
 }
 
 class _ReminderSheetState extends ConsumerState<_ReminderSheet> {
-  final _msg = GlobalKey<ScaffoldMessengerState>();
   final _comment = TextEditingController();
   final _number = TextEditingController(text: '15');
   int _selected =
@@ -848,7 +838,7 @@ class _ReminderSheetState extends ConsumerState<_ReminderSheet> {
     final me = await ref.read(apiUserProvider.future);
     if (!mounted) return;
     if (me == null) {
-      _snack(_msg, 'No pudimos identificar tu usuario', error: true);
+      _toast(context, 'No pudimos identificar tu usuario', error: true);
       return;
     }
     final unit = _custom ? _customUnit : _reminderOptions[_selected].$2;
@@ -869,13 +859,15 @@ class _ReminderSheetState extends ConsumerState<_ReminderSheet> {
     switch (r) {
       case Ok():
         applyClientExtras(ref, widget.chat, hasPendingReminder: true);
-        final root = ScaffoldMessenger.of(context);
+        final target = widget.successTarget;
+        if (target != null) {
+          PfToast.showOn(target, 'Recordatorio creado');
+        } else {
+          _toast(context, 'Recordatorio creado');
+        }
         Navigator.pop(context);
-        root
-          ..hideCurrentSnackBar()
-          ..showSnackBar(const SnackBar(content: Text('Recordatorio creado')));
       case Err(:final failure):
-        _snack(_msg, _failText(failure), error: true);
+        _toast(context, _failText(failure), error: true);
     }
   }
 
@@ -885,7 +877,6 @@ class _ReminderSheetState extends ConsumerState<_ReminderSheet> {
     final theme = Theme.of(context);
     return _Frame(
       title: 'Recordarme más tarde',
-      messenger: _msg,
       height: 0.9,
       child: ListView(
         padding: EdgeInsets.fromLTRB(

@@ -8,6 +8,7 @@ import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
 import 'package:partsflow_mobile/core/router/app_routes.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/core/realtime/chat_poll_policy.dart';
+import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:partsflow_mobile/core/utils/foreground_poller.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
@@ -138,11 +139,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
       if (_scroll.hasClients) _scroll.jumpTo(0);
       ref.read(chatListControllerProvider.notifier).searchPhones(shown);
       if (shown.length < phones.length) {
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(content: Text('Mostrando los primeros $maxSearchPhones')),
-          );
+        PfToast.show(context, 'Mostrando los primeros $maxSearchPhones');
       }
       setState(() {});
       return;
@@ -264,9 +261,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage> {
     final err = await ref.read(chatListControllerProvider.notifier).refresh();
     await cards;
     if (err != null && mounted) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text(err)));
+      PfToast.show(context, err, kind: PfToastKind.error);
     }
   }
 

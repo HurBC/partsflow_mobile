@@ -74,16 +74,6 @@ abstract class AppTheme {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       ),
 
-      snackBarTheme: SnackBarThemeData(
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: pf.text,
-        contentTextStyle: TextStyle(
-          fontFamily: AppTextTheme.fontFamily,
-          fontSize: 14,
-          color: pf.bg,
-        ),
-      ),
-
       navigationBarTheme: NavigationBarThemeData(
         height: 80,
         backgroundColor: pf.surface,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:partsflow_mobile/core/router/tab_visibility.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/ui/toast/pf_toast_scope.dart';
 
 class AppShell extends StatelessWidget {
   const AppShell({super.key, required this.navigationShell});
@@ -12,39 +13,44 @@ class AppShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final pf = PfColors.of(context);
 
-    return Scaffold(
-      body: TabVisibility(
-        activeIndex: navigationShell.currentIndex,
-        child: navigationShell,
-      ),
-      bottomNavigationBar: DecoratedBox(
-        decoration: BoxDecoration(
-          border: Border(top: BorderSide(color: pf.divider)),
+    // La barra mide 80 (+ safe area, que suma el aviso) + borde 1; el aviso
+    // queda 8 px sobre ella.
+    return PfToastScope(
+      bottomClearance: 89,
+      child: Scaffold(
+        body: TabVisibility(
+          activeIndex: navigationShell.currentIndex,
+          child: navigationShell,
         ),
-        child: NavigationBar(
-          selectedIndex: navigationShell.currentIndex,
-          // Volver a tocar la tab activa regresa a su raíz.
-          onDestinationSelected: (index) => navigationShell.goBranch(
-            index,
-            initialLocation: index == navigationShell.currentIndex,
+        bottomNavigationBar: DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border(top: BorderSide(color: pf.divider)),
           ),
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.chat_bubble_outline),
-              selectedIcon: Icon(Icons.chat_bubble),
-              label: 'Chats',
+          child: NavigationBar(
+            selectedIndex: navigationShell.currentIndex,
+            // Volver a tocar la tab activa regresa a su raíz.
+            onDestinationSelected: (index) => navigationShell.goBranch(
+              index,
+              initialLocation: index == navigationShell.currentIndex,
             ),
-            NavigationDestination(
-              icon: Icon(Icons.receipt_long_outlined),
-              selectedIcon: Icon(Icons.receipt_long),
-              label: 'Pedidos',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.person_outline),
-              selectedIcon: Icon(Icons.person),
-              label: 'Perfil',
-            ),
-          ],
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.chat_bubble_outline),
+                selectedIcon: Icon(Icons.chat_bubble),
+                label: 'Chats',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.receipt_long_outlined),
+                selectedIcon: Icon(Icons.receipt_long),
+                label: 'Pedidos',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.person_outline),
+                selectedIcon: Icon(Icons.person),
+                label: 'Perfil',
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:partsflow_mobile/core/router/app_routes.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:partsflow_mobile/core/utils/foreground_poller.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_providers.dart'
@@ -95,9 +96,7 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
   Future<void> _refresh() async {
     final err = await ref.read(ordersListControllerProvider.notifier).refresh();
     if (err != null && mounted) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text(err)));
+      PfToast.show(context, err, kind: PfToastKind.error);
     }
   }
 

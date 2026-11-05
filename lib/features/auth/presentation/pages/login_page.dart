@@ -6,6 +6,7 @@ import 'package:partsflow_mobile/core/router/app_routes.dart';
 import 'package:partsflow_mobile/core/storage/storage_keys.dart';
 import 'package:partsflow_mobile/core/theme/app_theme.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/auth/domain/entities/login_outcome.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
@@ -219,12 +220,9 @@ class _LoginViewState extends ConsumerState<_LoginView> {
                         fontWeight: FontWeight.w500,
                       ),
                     ),
-                    onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Recupérala desde el Backoffice por ahora.',
-                        ),
-                      ),
+                    onPressed: () => PfToast.show(
+                      context,
+                      'Recupérala desde el Backoffice por ahora.',
                     ),
                     child: const Text('¿Olvidaste tu contraseña?'),
                   ),

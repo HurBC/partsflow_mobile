@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:partsflow_mobile/core/utils/result.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/outgoing_attachment.dart';
@@ -15,11 +16,8 @@ import 'package:partsflow_mobile/features/chat/presentation/utils/audio_playback
 import 'package:partsflow_mobile/features/chat/presentation/utils/media_files.dart';
 import 'package:partsflow_mobile/features/chat/presentation/widgets/video_player_page.dart';
 
-void _snack(BuildContext context, String text) {
-  ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(content: Text(text)));
-}
+void _toast(BuildContext context, String text) =>
+    PfToast.show(context, text, kind: PfToastKind.error);
 
 String _extForMime(String? mime, String fallback) {
   final m = (mime ?? '').toLowerCase();
@@ -162,7 +160,7 @@ class _AudioMessageViewState extends ConsumerState<AudioMessageView>
       _player = null;
       if (mounted) {
         setState(() => _loading = false);
-        _snack(context, 'No se pudo reproducir el audio');
+        _toast(context, 'No se pudo reproducir el audio');
       }
     }
   }
@@ -329,7 +327,7 @@ class _VideoMessageViewState extends ConsumerState<VideoMessageView> {
         await showVideoPlayer(context, uri: Uri.parse(url));
         return;
       }
-      if (mounted) _snack(context, 'No se pudo abrir el video');
+      if (mounted) _toast(context, 'No se pudo abrir el video');
       return;
     }
     setState(() => _busy = true);
@@ -343,7 +341,7 @@ class _VideoMessageViewState extends ConsumerState<VideoMessageView> {
         );
     if (!mounted) return;
     setState(() => _busy = false);
-    if (res.file == null) return _snack(context, res.error!);
+    if (res.file == null) return _toast(context, res.error!);
     await showVideoPlayer(context, file: res.file, mime: mime);
   }
 
@@ -483,7 +481,7 @@ class _DocumentMessageViewState extends ConsumerState<DocumentMessageView> {
     if (m.mediaId == null) {
       final url = m.mediaUrl;
       if (url != null && await openExternal(Uri.parse(url))) return;
-      if (mounted) _snack(context, 'No se pudo abrir el documento');
+      if (mounted) _toast(context, 'No se pudo abrir el documento');
       return;
     }
     setState(() => _busy = true);
@@ -497,13 +495,13 @@ class _DocumentMessageViewState extends ConsumerState<DocumentMessageView> {
         );
     if (!mounted) return;
     setState(() => _busy = false);
-    if (res.file == null) return _snack(context, res.error!);
+    if (res.file == null) return _toast(context, res.error!);
     final ok = await openLocalFile(
       res.file!.path,
       mime: mimeFromName(name, hint: m.mediaMime),
     );
     if (!ok && mounted) {
-      _snack(context, 'No hay una app para abrir este documento');
+      _toast(context, 'No hay una app para abrir este documento');
     }
   }
 
@@ -601,7 +599,7 @@ class LocationMessageView extends StatelessWidget {
                     Uri.parse('https://www.google.com/maps?q=$lat,$lon'),
                   );
                   if (!ok && context.mounted) {
-                    _snack(context, 'No se pudo abrir el mapa');
+                    _toast(context, 'No se pudo abrir el mapa');
                   }
                 },
           child: ConstrainedBox(
@@ -700,7 +698,7 @@ class ContactsMessageView extends StatelessWidget {
                             ),
                           );
                           if (!ok && context.mounted) {
-                            _snack(context, 'No se pudo abrir el marcador');
+                            _toast(context, 'No se pudo abrir el marcador');
                           }
                         },
                         child: ConstrainedBox(
