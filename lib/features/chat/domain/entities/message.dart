@@ -52,6 +52,7 @@ class Message {
     this.isLocal = false,
     this.errorText,
     this.websocketId,
+    this.serverId,
     this.errorCode,
     this.isEdited = false,
     this.mediaPending = false,
@@ -102,6 +103,10 @@ class Message {
 
   /// Id que Wali usa en los eventos de estado por WebSocket.
   final String? websocketId;
+
+  /// `id` del documento en el servidor (ObjectId, crece con la inserción) aunque
+  /// [id] sea el local `local-…`; desempata el orden dentro del mismo segundo.
+  final String? serverId;
 
   /// `error_code` de Meta cuando el envío falló en el servidor (ver send_errors).
   final int? errorCode;
@@ -163,12 +168,13 @@ class Message {
     String? mediaMime,
     String? localPath,
     bool? mediaPending,
+    String? flow,
   }) => Message(
     id: id ?? this.id,
     messageId: messageId,
     date: date,
     type: type,
-    flow: flow,
+    flow: flow ?? this.flow,
     text: text,
     status: status ?? this.status,
     reference: reference,
@@ -196,6 +202,7 @@ class Message {
     isLocal: isLocal,
     errorText: clearError ? null : (errorText ?? this.errorText),
     websocketId: websocketId,
+    serverId: serverId,
     errorCode: errorCode,
     isEdited: isEdited,
     mediaPending: mediaPending ?? this.mediaPending,
@@ -238,6 +245,7 @@ class Message {
           other.isLocal == isLocal &&
           other.errorText == errorText &&
           other.websocketId == websocketId &&
+          other.serverId == serverId &&
           other.errorCode == errorCode &&
           other.isEdited == isEdited &&
           other.mediaPending == mediaPending;
@@ -274,6 +282,7 @@ class Message {
     isLocal,
     errorText,
     websocketId,
+    serverId,
     errorCode,
     isEdited,
     mediaPending,

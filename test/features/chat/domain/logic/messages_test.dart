@@ -6,6 +6,7 @@ import 'package:partsflow_mobile/features/chat/domain/logic/messages.dart';
 import '../../_fixtures.dart';
 
 void main() {
+  sendOrderTests();
   final t0 = DateTime(2025, 1, 1, 10);
   DateTime at(int min) => t0.add(Duration(minutes: min));
 
@@ -409,5 +410,84 @@ void main() {
       expect(r.localPath, '/tmp/a.jpg');
       expect(r.uploadProgress, 0.5);
     });
+  });
+}
+
+void sendOrderTests() {
+  group('orden estable y dedupe de pendientes', () {
+    test(
+      'entrante y propio del mismo segundo: orden de insercion del servidor',
+      () {
+        final d0 = DateTime(2026, 1, 1, 10);
+        final inbound = messageFromJson({
+          'id': '65a000000000000000000002',
+          'message_id': 'wamidB',
+          'type': 'text',
+          'flow': 'inbound',
+          'message': 'cliente',
+          'date': d0.toIso8601String(),
+        })!;
+        final own = messageFromJson({
+          'id': '65a000000000000000000001',
+          'message_id': 'wamidA',
+          'websocket_id': 'local-100-1',
+          'type': 'text',
+          'flow': 'outbound',
+          'message': 'mio',
+          'date': d0.toIso8601String(),
+        })!;
+        expect(own.id, 'local-100-1');
+        expect(mergeMessages([inbound], [own]).map((m) => m.text), [
+          'mio',
+          'cliente',
+        ]);
+        expect(mergeMessages([own], [inbound]).map((m) => m.text), [
+          'mio',
+          'cliente',
+        ]);
+      },
+    );
+    test('absorbPending tambien por websocketId', () {
+      final d = DateTime(2026, 1, 1, 10);
+      final real = msg('oid1', d, websocketId: 'local-5-5');
+      final p = msg('local-5-5', d, isLocal: true);
+      final r = absorbPending([real], [p]);
+      expect(r.pending, isEmpty);
+      expect(r.absorbed, {'local-5-5'});
+    });
+    final d = DateTime(2026, 1, 1, 10);
+    test('empate de fecha: propios por orden de envio local', () {
+      final a = msg('local-100-1', d, flow: 'outbound');
+      final b = msg('local-100-2', d, flow: 'outbound');
+      final c3 = msg('local-99-5', d, flow: 'outbound');
+      expect(mergeMessages([b, a], [c3]).map((m) => m.id), [
+        'local-99-5',
+        'local-100-1',
+        'local-100-2',
+      ]);
+    });
+    test('applyNewMessages no reordena por llegada', () {
+      final a = msg('local-100-1', d);
+      final b = msg('local-100-2', d);
+      expect(applyNewMessages([b], [a])!.map((m) => m.id), [
+        'local-100-1',
+        'local-100-2',
+      ]);
+    });
+    test(
+      'absorbPending quita el pendiente cuyo real ya esta (y traslada localPath)',
+      () {
+        final real = msg('local-1-1', d);
+        final p = msg(
+          'local-1-1',
+          d,
+          isLocal: true,
+        ).copyWith(localPath: '/a.m4a');
+        final other = msg('local-2-2', d, isLocal: true);
+        final r = absorbPending([real], [p, other]);
+        expect(r.pending.map((m) => m.id), ['local-2-2']);
+        expect(r.messages.single.localPath, '/a.m4a');
+      },
+    );
   });
 }

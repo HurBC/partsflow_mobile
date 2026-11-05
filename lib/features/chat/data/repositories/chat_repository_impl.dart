@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -147,6 +149,7 @@ class ChatRepositoryImpl implements ChatRepository {
     String? quoteBody,
     String? mediaFileId,
     String? mediaFileName,
+    String? websocketId,
   }) async {
     try {
       final client = chat.client;
@@ -167,6 +170,7 @@ class ChatRepositoryImpl implements ChatRepository {
         if (mediaFileId != null)
           'media': {'file': mediaFileId, 'file_name': mediaFileName ?? ''},
         'responsible_id': ?userId,
+        'websocket_id': ?websocketId,
         'reference': 'backoffice',
       });
       if (asBool(asMap(body)?['suppressed']) == true) {
@@ -175,12 +179,15 @@ class ChatRepositoryImpl implements ChatRepository {
       if (status != 201 && status != 200) {
         return Result.ok(SendOutcome(SendStatus.rejected, 'HTTP $status'));
       }
-      try {
-        await _remote.setLastSellerMessage(chat.phone);
-      } catch (e) {
-        pfLog('set_last_seller_message falló (ignorado): ${truncateLog(e)}');
-      }
-      return Result.ok(const SendOutcome(SendStatus.sent));
+      // Sin esperar: no frena la cola de envíos (el orden lo da el POST).
+      unawaited(
+        _remote.setLastSellerMessage(chat.phone).catchError((Object e) {
+          pfLog('set_last_seller_message falló (ignorado): ${truncateLog(e)}');
+        }),
+      );
+      return Result.ok(
+        SendOutcome(SendStatus.sent, null, _created(body, websocketId)),
+      );
     } on DioException catch (e) {
       final status = e.response?.statusCode;
       if (status == 409) {
@@ -193,6 +200,16 @@ class ChatRepositoryImpl implements ChatRepository {
     } catch (e) {
       return Result.err(_failReason(e));
     }
+  }
+
+  /// Mensaje real del documento devuelto por el POST, solo si es el que
+  /// enviamos (`websocket_id` == id local). Null si no hay documento o es una
+  /// respuesta sintética: el llamador cae al camino por recarga/realtime.
+  static Message? _created(Object? body, String? websocketId) {
+    final m = asMap(body);
+    if (m == null || websocketId == null) return null;
+    if (nonEmpty(asStr(m['websocket_id'])) != websocketId) return null;
+    return messageFromJson({'flow': 'outbound', ...m});
   }
 
   @override

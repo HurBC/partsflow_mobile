@@ -282,4 +282,40 @@ void main() {
       expect(orderStripFromJson('x'), isNull);
     });
   });
+
+  group('messageFromJson envio', () {
+    Map<String, dynamic> base(Map<String, dynamic> x) => {
+      'id': 'oid1',
+      'message_id': 'wamid1',
+      'type': 'text',
+      'flow': 'outbound',
+      'message': 'hola',
+      'date': '2026-01-02T10:00:00Z',
+      ...x,
+    };
+    test('status vacio se deriva de status_code', () {
+      for (final (code, st) in [
+        (1, 'pending'),
+        (2, 'sent'),
+        (3, 'delivered'),
+        (4, 'read'),
+        (5, 'error'),
+      ]) {
+        expect(
+          messageFromJson(base({'status': '', 'status_code': code}))!.status,
+          st,
+        );
+      }
+      expect(
+        messageFromJson(base({'status': 'read', 'status_code': 1}))!.status,
+        'read',
+      );
+    });
+    test('websocket_id local da la misma id que el pendiente', () {
+      final m = messageFromJson(base({'websocket_id': 'local-12-3'}))!;
+      expect(m.id, 'local-12-3');
+      expect(m.websocketId, 'local-12-3');
+      expect(messageFromJson(base({'websocket_id': 'abc'}))!.id, 'oid1');
+    });
+  });
 }
