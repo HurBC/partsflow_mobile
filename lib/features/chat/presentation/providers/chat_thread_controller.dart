@@ -483,6 +483,11 @@ class ChatThread extends _$ChatThread {
         !clearResp) {
       return;
     }
+    // Otro operador cambió el modo mientras hay un PATCH nuestro en vuelo: ese
+    // es el valor al que revertir si el PATCH falla.
+    if (_juliaSending && (mode != null || ai != null)) {
+      _juliaConfirmed = ai ?? (mode == 'automatic');
+    }
     _setChat(
       c.copyWith(
         client: cl.copyWith(
@@ -897,24 +902,6 @@ class ChatThread extends _$ChatThread {
 
   // ---- Acciones ------------------------------------------------------------
 
-  Future<ActionResult> _patch(
-    Map<String, Object?> fields,
-    Chat Function(Chat, ApiUser?) apply,
-    String okMessage, {
-    bool needsUser = false,
-  }) async {
-    final o = await ref
-        .read(chatActionsServiceProvider)
-        .patchClient(
-          state.chat,
-          fields,
-          apply,
-          okMessage,
-          needsUser: needsUser,
-        );
-    return _applyOutcome(o);
-  }
-
   /// Refleja el resultado de una acción del servicio en el hilo y la lista.
   ActionResult _applyOutcome(ChatActionOutcome o) {
     if (!ref.mounted) return (ok: false, message: '');
@@ -943,24 +930,104 @@ class ChatThread extends _$ChatThread {
     ref.read(chatListControllerProvider.notifier).poll();
   }
 
-  Future<ActionResult> setJulia(bool on) async {
-    final res = await _patch(
-      {
-        'operation_mode': on ? 'automatic' : 'manual',
-        'operation_source': 'backoffice',
-      },
-      (c, _) => c.copyWith(
-        client: c.client!.copyWith(
-          operationMode: on ? 'automatic' : 'manual',
-          isAiActive: on,
-        ),
-      ),
-      on ? 'Julia activada' : 'Julia en pausa',
-    );
-    if (res.ok && on && ref.mounted) {
-      unawaited(_triggerOrderTaker(state.chat.phone));
+  // ---- Toggle de Julia (optimista, un PATCH a la vez) ----------------------
+
+  bool _juliaDesired = false;
+  bool _juliaConfirmed = false;
+  bool _juliaSending = false;
+  bool _juliaForce =
+      false; // envía al menos una vez aunque coincida con lo local
+  Completer<ActionResult>? _juliaWaiter;
+
+  Chat _withJulia(Chat c, bool on) => c.copyWith(
+    client: c.client!.copyWith(
+      operationMode: on ? 'automatic' : 'manual',
+      isAiActive: on,
+    ),
+  );
+
+  /// Aplica [on] al instante en el hilo y la lista y devuelve (síncrono hasta
+  /// aquí) un futuro que completa cuando el servidor respondió: ok, o fallo
+  /// tras revertir. Toques rápidos se coalescen: nunca hay dos PATCH del modo
+  /// en vuelo; al terminar uno se envía el último valor deseado. Un toque
+  /// superado completa con ok y mensaje vacío; solo el último informa.
+  Future<ActionResult> setJulia(bool on) {
+    if (!ref.mounted || state.chat.client == null) {
+      return Future.value((
+        ok: false,
+        message: 'No se pudo completar la acción',
+      ));
     }
-    return res;
+    if (!_juliaSending) {
+      _juliaConfirmed = state.chat.client!.juliaOn;
+      _juliaForce = true;
+    }
+    _juliaDesired = on;
+    _setChat(_withJulia(state.chat, on));
+    _juliaWaiter?.complete((ok: true, message: ''));
+    final waiter = _juliaWaiter = Completer<ActionResult>();
+    if (!_juliaSending) unawaited(_drainJulia());
+    return waiter.future;
+  }
+
+  Future<void> _drainJulia() async {
+    _juliaSending = true;
+    ActionResult last = (ok: true, message: '');
+    // Capturado antes de los await: el drain debe poder terminar (enviar el
+    // último valor, revertir la lista) aunque el hilo ya se haya desmontado.
+    final svc = ref.read(chatActionsServiceProvider);
+    final list = ref.read(chatListControllerProvider.notifier);
+    var chat = state.chat;
+    try {
+      while (_juliaForce || _juliaDesired != _juliaConfirmed) {
+        _juliaForce = false;
+        if (ref.mounted) chat = state.chat;
+        final v = _juliaDesired;
+        final o = await svc.patchClient(
+          chat,
+          {
+            'operation_mode': v ? 'automatic' : 'manual',
+            'operation_source': 'backoffice',
+          },
+          (c, _) => _withJulia(c, v),
+          v ? 'Julia activada' : 'Julia en pausa',
+        );
+        final live = ref.mounted;
+        if (o.ok) {
+          _juliaConfirmed = v;
+          last = (ok: true, message: o.message);
+          list.poll();
+          if (live && v && _juliaDesired == v) {
+            unawaited(_triggerOrderTaker(state.chat.phone));
+          }
+        } else if (_juliaDesired == v) {
+          // Nadie lo cambió desde esta petición: revierte (solo si el valor
+          // local sigue siendo el optimista; si llegó otro por realtime, se
+          // respeta) y avisa.
+          final back = _juliaConfirmed;
+          if (live) {
+            if (state.chat.client?.juliaOn == v) {
+              _setChat(_withJulia(state.chat, back));
+            }
+          } else {
+            unawaited(
+              list.applyLocalChange(
+                chat.id,
+                (c) => c.client?.juliaOn == v ? _withJulia(c, back) : c,
+              ),
+            );
+          }
+          _juliaDesired = back;
+          last = (ok: false, message: o.message);
+        }
+        // Si hubo un toque posterior, el bucle envía el último valor.
+      }
+    } finally {
+      _juliaSending = false;
+      final w = _juliaWaiter;
+      _juliaWaiter = null;
+      if (w != null && !w.isCompleted) w.complete(last);
+    }
   }
 
   static const _orderTakerTimeout = Duration(seconds: 45);
