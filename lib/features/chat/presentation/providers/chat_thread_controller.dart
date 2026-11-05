@@ -29,6 +29,12 @@ export 'package:partsflow_mobile/features/chat/domain/entities/thread_note.dart'
 
 part 'chat_thread_controller.g.dart';
 
+/// Aviso efímero (snackbar); sin ==/hashCode: cada instancia es un evento nuevo.
+class ThreadNotice {
+  ThreadNotice(this.text);
+  final String text;
+}
+
 class ThreadState {
   const ThreadState({
     required this.chat,
@@ -43,6 +49,7 @@ class ThreadState {
     this.order,
     this.historyLoaded = false,
     this.replyTo,
+    this.notice,
   });
 
   final Chat chat;
@@ -60,6 +67,9 @@ class ThreadState {
   /// Mensaje que se está citando en el composer.
   final Message? replyTo;
 
+  /// Aviso para mostrar como snackbar (no se renderiza en el hilo).
+  final ThreadNotice? notice;
+
   ThreadState copyWith({
     Chat? chat,
     List<Message>? messages,
@@ -75,6 +85,7 @@ class ThreadState {
     bool? historyLoaded,
     Message? replyTo,
     bool clearReply = false,
+    ThreadNotice? notice,
   }) => ThreadState(
     chat: chat ?? this.chat,
     messages: messages ?? this.messages,
@@ -88,6 +99,7 @@ class ThreadState {
     order: order ?? this.order,
     historyLoaded: historyLoaded ?? this.historyLoaded,
     replyTo: clearReply ? null : (replyTo ?? this.replyTo),
+    notice: notice ?? this.notice,
   );
 
   /// Último mensaje entrante conocido (historial o dato del chat).
@@ -114,7 +126,8 @@ class ThreadState {
           other.nextPage == nextPage &&
           other.order == order &&
           other.historyLoaded == historyLoaded &&
-          other.replyTo == replyTo;
+          other.replyTo == replyTo &&
+          other.notice == notice;
 
   @override
   int get hashCode => Object.hashAll([
@@ -130,6 +143,7 @@ class ThreadState {
     order,
     historyLoaded,
     replyTo,
+    notice,
   ]);
 }
 
@@ -491,10 +505,9 @@ class ChatThread extends _$ChatThread {
     ref.read(chatListControllerProvider.notifier).replaceChat(chat);
   }
 
-  void _note(String text) {
-    state = state.copyWith(
-      notes: [...state.notes, ThreadNote(DateTime.now(), text)],
-    );
+  /// Aviso efímero para la página (snackbar); no queda en el hilo.
+  void _notice(String text) {
+    state = state.copyWith(notice: ThreadNotice(text));
   }
 
   // ---- Envío -------------------------------------------------------------
@@ -729,7 +742,7 @@ class ChatThread extends _$ChatThread {
                     ),
                   ),
                 );
-                _note('Tomaste el chat · Julia en pausa');
+                _notice('Tomaste el chat · Julia en pausa');
               }
             case SendStatus.suppressed:
               error = 'No se pudo enviar por este canal';
@@ -864,9 +877,6 @@ class ChatThread extends _$ChatThread {
       ),
       on ? 'Julia activada' : 'Julia en pausa',
     );
-    if (res.ok && ref.mounted) {
-      _note(on ? 'Julia activada' : 'Julia en pausa');
-    }
     if (res.ok && on && ref.mounted) {
       unawaited(_triggerOrderTaker(state.chat.phone));
     }
@@ -890,9 +900,11 @@ class ChatThread extends _$ChatThread {
           .timeout(_orderTakerTimeout);
       if (!ref.mounted) return;
       if (r is Err && state.chat.client?.operationMode == 'automatic') {
-        _note(
-          'Julia quedó activa, pero no pudo atender ahora; responderá cuando '
-          'el cliente vuelva a escribir.',
+        state = state.copyWith(
+          notice: ThreadNotice(
+            'Julia quedó activa, pero no pudo atender ahora; responderá cuando '
+            'el cliente vuelva a escribir.',
+          ),
         );
       }
     } on TimeoutException {
