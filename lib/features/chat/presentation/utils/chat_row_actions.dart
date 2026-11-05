@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/presentation/providers/chat_actions_service.dart';
@@ -12,13 +13,17 @@ import 'package:partsflow_mobile/features/chat/presentation/widgets/chat_reminde
 
 /// Acciones de un chat desde su fila del listado (mantener presionado): la
 /// misma hoja del detalle, pero sin abrir el hilo (no carga el historial).
-/// Éxito -> se refleja en la lista; error -> snackbar.
+/// Éxito -> se refleja en la lista; error -> aviso.
 Future<void> showChatRowActions(
   BuildContext context,
   WidgetRef ref,
   Chat chat,
 ) async {
-  final messenger = ScaffoldMessenger.of(context);
+  // Antes de cualquier await: la fila puede desmontarse al cambiar la lista.
+  final target = PfToast.capture(context);
+  void toast(String text, PfToastKind kind) {
+    if (target != null) PfToast.showOn(target, text, kind: kind);
+  }
   final me = ref.read(apiUserProvider).value;
   final action = await showChatActionsSheet(
     context,
@@ -39,7 +44,7 @@ Future<void> showChatRowActions(
       final text = formatPhone(chat.phone).replaceAll(' ', '');
       if (text.isEmpty) return;
       await Clipboard.setData(ClipboardData(text: text));
-      _snack(messenger, 'Número copiado');
+      toast('Número copiado', PfToastKind.success);
       return;
     default:
       break;
@@ -52,12 +57,5 @@ Future<void> showChatRowActions(
         .read(chatListControllerProvider.notifier)
         .applyLocalChange(chat.id, change);
   }
-  _snack(messenger, o.message);
-}
-
-void _snack(ScaffoldMessengerState m, String text) {
-  if (text.isEmpty) return;
-  m
-    ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(content: Text(text)));
+  toast(o.message, o.ok ? PfToastKind.success : PfToastKind.error);
 }

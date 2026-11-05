@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:partsflow_mobile/core/errors/failure.dart';
@@ -35,11 +36,12 @@ class _OrderDetailPageState extends ConsumerState<OrderDetailPage> {
   /// productos, cotización ni notas).
   OrderSummary? _fresh;
 
-  void _snack(String text) {
+  /// Contexto bajo el [PfToastScope] de la página (el aviso queda sobre el botón).
+  BuildContext? _toastCtx;
+
+  void _toast(String text, PfToastKind kind) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(text)));
+    PfToast.show(_toastCtx ?? context, text, kind: kind);
   }
 
   Future<void> _openChat(String phone) async {
@@ -52,9 +54,9 @@ class _OrderDetailPageState extends ConsumerState<OrderDetailPage> {
       case Ok(:final value) when value != null:
         context.push(AppRoutes.chatDetail(value.id), extra: value);
       case Ok():
-        _snack('No encontramos el chat de este cliente');
+        _toast('No encontramos el chat de este cliente', PfToastKind.error);
       case Err(:final failure):
-        _snack(failureMessage(failure));
+        _toast(failureMessage(failure), PfToastKind.error);
     }
   }
 
@@ -97,7 +99,7 @@ class _OrderDetailPageState extends ConsumerState<OrderDetailPage> {
     setState(() => _moving = false);
     switch (r) {
       case Ok(:final value) when value.ok:
-        _snack('Pedido #${order.id} movido a ${to.label}');
+        _toast('Pedido #${order.id} movido a ${to.label}', PfToastKind.success);
         final from = order.stage;
         // Mientras llega la cabecera real, la etapa se ve de inmediato.
         setState(() => _fresh = order.withStatus(to.moveStatus));
@@ -108,9 +110,12 @@ class _OrderDetailPageState extends ConsumerState<OrderDetailPage> {
         }
         _refreshOrder();
       case Ok(:final value):
-        _snack(value.detail ?? 'No pudimos mover el pedido. Intenta de nuevo.');
+        _toast(
+          value.detail ?? 'No pudimos mover el pedido. Intenta de nuevo.',
+          PfToastKind.error,
+        );
       case Err(:final failure):
-        _snack(failureMessage(failure));
+        _toast(failureMessage(failure), PfToastKind.error);
     }
   }
 
@@ -173,6 +178,19 @@ class _OrderDetailPageState extends ConsumerState<OrderDetailPage> {
       );
     }
 
+    return PfToastScope(
+      // Botón fijo: 12 + 52 + 12 + borde 1 (+ safe area, que suma el aviso) + 8.
+      bottomClearance: order == null ? PfToastScope.defaultClearance : 85,
+      child: Builder(
+        builder: (toastContext) {
+          _toastCtx = toastContext;
+          return _scaffold(order, body, pf);
+        },
+      ),
+    );
+  }
+
+  Widget _scaffold(OrderSummary? order, Widget body, PfColors pf) {
     return Scaffold(
       appBar: AppBar(
         title: Text('Pedido #${widget.id}'),

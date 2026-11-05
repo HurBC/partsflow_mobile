@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_key.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/message_template.dart';
@@ -13,12 +14,13 @@ typedef TemplateChoice = ({
 });
 
 /// Elegir plantilla, completar variables y enviar. Muestra el resultado en un
-/// SnackBar. Lo usan el menú "+" y "Elegir plantilla" de la ventana de 24 h.
+/// aviso. Lo usan el menú "+" y "Elegir plantilla" de la ventana de 24 h.
 Future<void> pickAndSendTemplate(
   BuildContext context,
   WidgetRef ref,
   Chat chat,
 ) async {
+  final target = PfToast.capture(context);
   final choice = await showModalBottomSheet<TemplateChoice>(
     context: context,
     isScrollControlled: true,
@@ -27,14 +29,16 @@ Future<void> pickAndSendTemplate(
     builder: (_) => const _TemplatesSheet(),
   );
   if (choice == null || !context.mounted) return;
-  final messenger = ScaffoldMessenger.of(context);
   final r = await ref
       .read(chatThreadProvider(ChatKey(chat)).notifier)
       .sendTemplate(choice.template, choice.values);
   if (r.message.isEmpty) return;
-  messenger
-    ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(content: Text(r.message)));
+  if (target == null) return;
+  PfToast.showOn(
+    target,
+    r.message,
+    kind: r.ok ? PfToastKind.success : PfToastKind.error,
+  );
 }
 
 class _TemplatesSheet extends ConsumerStatefulWidget {

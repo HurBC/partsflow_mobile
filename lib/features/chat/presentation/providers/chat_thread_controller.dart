@@ -29,10 +29,44 @@ export 'package:partsflow_mobile/features/chat/domain/entities/thread_note.dart'
 
 part 'chat_thread_controller.g.dart';
 
-/// Aviso efímero (snackbar); sin ==/hashCode: cada instancia es un evento nuevo.
+enum ThreadNoticeKind { info, warning }
+
+/// Acción que ofrece un aviso (botón del aviso).
+enum ThreadNoticeAction { retryJulia }
+
+/// Resultado de [ChatThread.retryOrderTaker].
+enum OrderTakerOutcome {
+  /// Julia respondió (o la petición terminó bien).
+  ok,
+
+  /// Falló y se emitió el aviso con "Reintentar".
+  failed,
+
+  /// Sin respuesta a tiempo: el servidor sigue procesando.
+  timeout,
+
+  /// Ya hay una petición a order_taker en curso (no se lanzó otra).
+  busy,
+
+  /// No se intentó (chat fuera de 'automatic', sin cliente o desmontado).
+  skipped,
+}
+
+/// Aviso efímero; sin ==/hashCode: cada instancia es un evento nuevo.
+/// [paused] muestra el ícono de pausa (Julia en pausa).
 class ThreadNotice {
-  ThreadNotice(this.text);
+  ThreadNotice(
+    this.text, {
+    this.body,
+    this.kind = ThreadNoticeKind.info,
+    this.paused = false,
+    this.action,
+  });
   final String text;
+  final String? body;
+  final ThreadNoticeKind kind;
+  final bool paused;
+  final ThreadNoticeAction? action;
 }
 
 class ThreadState {
@@ -67,7 +101,7 @@ class ThreadState {
   /// Mensaje que se está citando en el composer.
   final Message? replyTo;
 
-  /// Aviso para mostrar como snackbar (no se renderiza en el hilo).
+  /// Aviso para mostrar como PfToast (no se renderiza en el hilo).
   final ThreadNotice? notice;
 
   ThreadState copyWith({
@@ -505,9 +539,9 @@ class ChatThread extends _$ChatThread {
     ref.read(chatListControllerProvider.notifier).replaceChat(chat);
   }
 
-  /// Aviso efímero para la página (snackbar); no queda en el hilo.
-  void _notice(String text) {
-    state = state.copyWith(notice: ThreadNotice(text));
+  /// Aviso efímero para la página; no queda en el hilo.
+  void _notice(ThreadNotice notice) {
+    state = state.copyWith(notice: notice);
   }
 
   // ---- Envío -------------------------------------------------------------
@@ -742,7 +776,13 @@ class ChatThread extends _$ChatThread {
                     ),
                   ),
                 );
-                _notice('Tomaste el chat · Julia en pausa');
+                _notice(
+                  ThreadNotice(
+                    'Tomaste el chat',
+                    body: 'Julia en pausa',
+                    paused: true,
+                  ),
+                );
               }
             case SendStatus.suppressed:
               error = 'No se pudo enviar por este canal';
@@ -890,28 +930,44 @@ class ChatThread extends _$ChatThread {
   /// el modo; si expira solo se registra (el servidor sigue procesando).
   bool _orderTakerInFlight = false;
 
-  Future<void> _triggerOrderTaker(String phone) async {
-    if (_orderTakerInFlight) return;
+  Future<OrderTakerOutcome> _triggerOrderTaker(String phone) async {
+    if (_orderTakerInFlight) return OrderTakerOutcome.busy;
     _orderTakerInFlight = true;
     try {
       final r = await ref
           .read(chatRepositoryProvider)
           .triggerOrderTaker(phone)
           .timeout(_orderTakerTimeout);
-      if (!ref.mounted) return;
-      if (r is Err && state.chat.client?.operationMode == 'automatic') {
-        state = state.copyWith(
-          notice: ThreadNotice(
-            'Julia quedó activa, pero no pudo atender ahora; responderá cuando '
-            'el cliente vuelva a escribir.',
-          ),
-        );
+      if (!ref.mounted) return OrderTakerOutcome.skipped;
+      if (r is! Err) return OrderTakerOutcome.ok;
+      if (state.chat.client?.operationMode != 'automatic') {
+        return OrderTakerOutcome.skipped;
       }
+      _notice(
+        ThreadNotice(
+          'Julia no pudo atender',
+          body: 'Sigue activa; responderá al próximo mensaje.',
+          kind: ThreadNoticeKind.warning,
+          action: ThreadNoticeAction.retryJulia,
+        ),
+      );
+      return OrderTakerOutcome.failed;
     } on TimeoutException {
       pfLog('order_taker: sin respuesta en ${_orderTakerTimeout.inSeconds}s');
+      return OrderTakerOutcome.timeout;
     } finally {
       _orderTakerInFlight = false;
     }
+  }
+
+  /// "Reintentar" del aviso de fallo de Julia: mismo POST, mismo guard y
+  /// timeout. Solo si el chat sigue en 'automatic'. En fallo vuelve a emitir
+  /// el aviso con "Reintentar".
+  Future<OrderTakerOutcome> retryOrderTaker() async {
+    if (state.chat.client?.operationMode != 'automatic') {
+      return OrderTakerOutcome.skipped;
+    }
+    return _triggerOrderTaker(state.chat.phone);
   }
 
   /// Igual que el BO (ChatDetailTobBar.tsx): PATCH clients/{id}/update/ con

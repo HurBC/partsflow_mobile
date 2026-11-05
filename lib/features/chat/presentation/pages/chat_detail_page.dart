@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +9,8 @@ import 'package:partsflow_mobile/core/realtime/realtime_provider.dart';
 import 'package:partsflow_mobile/core/router/app_routes.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
 import 'package:partsflow_mobile/core/realtime/chat_poll_policy.dart';
+import 'package:partsflow_mobile/core/ui/size_reporter.dart';
+import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:partsflow_mobile/core/utils/foreground_poller.dart';
 import 'package:partsflow_mobile/core/utils/pf_log.dart';
 import 'package:partsflow_mobile/features/auth/presentation/providers/auth_providers.dart';
@@ -88,16 +91,86 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     _openChat.close(widget.chat.id);
     _poller.dispose();
     _flashTimer?.cancel();
+    for (final h in _toastHandles) {
+      PfToast.dismissIfCurrent(h);
+    }
     _composerFocus.dispose();
     _scroll.dispose();
     super.dispose();
   }
 
-  void _snack(String text) {
-    if (text.isEmpty || !mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(text)));
+  /// Contexto bajo el [PfToastScope] de la página (el aviso queda sobre el
+  /// composer).
+  BuildContext? _toastCtx;
+  double _composerH = 0;
+
+  void _onComposerSize(Size size) {
+    if (!mounted || (size.height - _composerH).abs() < 1) return;
+    setState(() => _composerH = size.height);
+  }
+
+  /// Avisos persistentes/de carga mostrados por esta página: se cierran al salir.
+  final _toastHandles = <PfToastHandle>[];
+
+  PfToastHandle? _toast(
+    String text, {
+    String? body,
+    PfToastKind kind = PfToastKind.success,
+    IconData? icon,
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) {
+    if (text.isEmpty || !mounted) return null;
+    final h = PfToast.show(
+      _toastCtx ?? context,
+      text,
+      body: body,
+      kind: kind,
+      icon: icon,
+      actionLabel: actionLabel,
+      onAction: onAction,
+    );
+    if (h != null && (actionLabel != null || kind == PfToastKind.loading)) {
+      _toastHandles.add(h);
+    }
+    return h;
+  }
+
+  void _toastResult(ActionResult r) =>
+      _toast(r.message, kind: r.ok ? PfToastKind.success : PfToastKind.error);
+
+  void _onNotice(ThreadNotice n) {
+    _toast(
+      n.text,
+      body: n.body,
+      kind: switch (n.kind) {
+        ThreadNoticeKind.info => PfToastKind.info,
+        ThreadNoticeKind.warning => PfToastKind.warning,
+      },
+      icon: n.paused ? Icons.pause_rounded : null,
+      actionLabel: n.action == null ? null : 'Reintentar',
+      onAction: n.action == ThreadNoticeAction.retryJulia ? _retryJulia : null,
+    );
+  }
+
+  Future<void> _retryJulia() async {
+    if (!mounted) return;
+    final loading = _toast('Reintentando…', kind: PfToastKind.loading);
+    final out = await ref
+        .read(chatThreadProvider(ChatKey(widget.chat)).notifier)
+        .retryOrderTaker();
+    if (!mounted) return;
+    switch (out) {
+      case OrderTakerOutcome.ok:
+        _toast('Julia está respondiendo', kind: PfToastKind.julia);
+      case OrderTakerOutcome.failed:
+        break; // el aviso con "Reintentar" llega por `notice`
+      case OrderTakerOutcome.busy:
+        _toast('Julia ya está revisando el chat', kind: PfToastKind.info);
+      case OrderTakerOutcome.timeout:
+      case OrderTakerOutcome.skipped:
+        PfToast.dismissIfCurrent(loading);
+    }
   }
 
   void _back() {
@@ -112,14 +185,19 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     final text = formatPhone(phone).replaceAll(' ', '');
     if (text.isEmpty) return;
     await Clipboard.setData(ClipboardData(text: text));
-    _snack('Número copiado');
+    _toast('Número copiado');
   }
 
   Future<void> _toggleJulia(bool current) async {
     final r = await ref
         .read(chatThreadProvider(ChatKey(widget.chat)).notifier)
         .setJulia(!current);
-    _snack(r.message);
+    if (!r.ok) return _toastResult(r);
+    if (!current) {
+      _toast(r.message, kind: PfToastKind.julia);
+    } else {
+      _toast(r.message, kind: PfToastKind.info, icon: Icons.pause_rounded);
+    }
   }
 
   Future<void> _openActions() async {
@@ -159,7 +237,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
       ChatAction.unarchive => await c.setArchived(false),
       _ => (ok: false, message: ''),
     };
-    _snack(r.message);
+    _toastResult(r);
     if (r.ok && action == ChatAction.markUnread && mounted) _back();
   }
 
@@ -206,7 +284,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
       _reply(m);
     } else {
       await Clipboard.setData(ClipboardData(text: m.text!));
-      _snack('Texto copiado');
+      _toast('Texto copiado');
     }
   }
 
@@ -250,7 +328,9 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
       final controller = ref.read(
         chatThreadProvider(ChatKey(widget.chat)).notifier,
       );
-      if (target == null) _snack('Buscando mensaje original…');
+      if (target == null) {
+        _toast('Buscando mensaje original…', kind: PfToastKind.info);
+      }
       while (target == null && pages < 5 && mounted) {
         if (!ref.read(chatThreadProvider(ChatKey(widget.chat))).hasMoreOlder) {
           break;
@@ -262,7 +342,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
       }
       if (!mounted) return;
       if (target == null) {
-        _snack('No se encontró el mensaje original');
+        _toast('No se encontró el mensaje original', kind: PfToastKind.info);
         return;
       }
       final id = target.id;
@@ -292,7 +372,9 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
         _scroll.jumpTo(dest.clamp(0.0, pos.maxScrollExtent));
         await WidgetsBinding.instance.endOfFrame;
       }
-      if (mounted) _snack('No se encontró el mensaje original');
+      if (mounted) {
+        _toast('No se encontró el mensaje original', kind: PfToastKind.info);
+      }
     } finally {
       _jumping = false;
       pfLog(
@@ -415,7 +497,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     final pf = PfColors.of(context);
     final key = ChatKey(widget.chat);
     ref.listen(chatThreadProvider(key).select((s) => s.notice), (prev, next) {
-      if (next != null && !identical(next, prev)) _snack(next.text);
+      if (next != null && !identical(next, prev)) _onNotice(next);
     });
     _poller.setInterval(
       chatThreadPollEvery(healthy: ref.watch(realtimeProvider)),
@@ -423,6 +505,23 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
     final applies = ref.watch(windowAppliesProvider).value ?? false;
     final myId = ref.watch(apiUserProvider.select((u) => u.value?.id));
 
+    final safeBottom = MediaQuery.paddingOf(context).bottom;
+    return PfToastScope(
+      // Alto real del composer (o del aviso de ventana) + 8; la safe area ya
+      // va dentro de él y la suma el aviso.
+      bottomClearance: _composerH == 0
+          ? PfToastScope.defaultClearance
+          : math.max(0, _composerH + 8 - safeBottom),
+      child: Builder(
+        builder: (toastContext) {
+          _toastCtx = toastContext;
+          return _scaffold(pf, key, applies, myId);
+        },
+      ),
+    );
+  }
+
+  Widget _scaffold(PfColors pf, ChatKey key, bool applies, String? myId) {
     return Scaffold(
       backgroundColor: pf.bg,
       body: Column(
@@ -453,7 +552,13 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
                 order: order,
                 onTap: () {
                   final id = int.tryParse(order.id);
-                  if (id == null) return _snack('No pudimos abrir el pedido');
+                  if (id == null) {
+                    _toast(
+                      'No pudimos abrir el pedido',
+                      kind: PfToastKind.error,
+                    );
+                    return;
+                  }
                   context.push(AppRoutes.orderDetail(id));
                 },
               );
@@ -464,34 +569,37 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
               builder: (context, ref, _) => _buildBody(ref, myId),
             ),
           ),
-          Consumer(
-            builder: (context, ref, _) {
-              final w = ref.watch(
-                chatThreadProvider(key).select(
-                  (s) => (
-                    historyLoaded: s.historyLoaded,
-                    lastInbound: s.lastInboundAt,
+          SizeReporter(
+            onSize: _onComposerSize,
+            child: Consumer(
+              builder: (context, ref, _) {
+                final w = ref.watch(
+                  chatThreadProvider(key).select(
+                    (s) => (
+                      historyLoaded: s.historyLoaded,
+                      lastInbound: s.lastInboundAt,
+                    ),
                   ),
-                ),
-              );
-              final windowClosed =
-                  applies &&
-                  w.historyLoaded &&
-                  (w.lastInbound == null ||
-                      DateTime.now().difference(w.lastInbound!) >=
-                          const Duration(hours: 24));
-              if (windowClosed) {
-                return _WindowNotice(
-                  onTemplate: () =>
-                      pickAndSendTemplate(context, ref, widget.chat),
                 );
-              }
-              return ChatComposer(
-                chat: widget.chat,
-                templatesEnabled: applies,
-                focusNode: _composerFocus,
-              );
-            },
+                final windowClosed =
+                    applies &&
+                    w.historyLoaded &&
+                    (w.lastInbound == null ||
+                        DateTime.now().difference(w.lastInbound!) >=
+                            const Duration(hours: 24));
+                if (windowClosed) {
+                  return _WindowNotice(
+                    onTemplate: () =>
+                        pickAndSendTemplate(context, ref, widget.chat),
+                  );
+                }
+                return ChatComposer(
+                  chat: widget.chat,
+                  templatesEnabled: applies,
+                  focusNode: _composerFocus,
+                );
+              },
+            ),
           ),
         ],
       ),

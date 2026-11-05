@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:partsflow_mobile/core/theme/pf_colors.dart';
+import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/chat_key.dart';
 import 'package:partsflow_mobile/features/chat/domain/entities/reminder.dart';
@@ -51,21 +52,18 @@ class _RemindersSheet extends ConsumerStatefulWidget {
 }
 
 class _RemindersSheetState extends ConsumerState<_RemindersSheet> {
-  final _msg = GlobalKey<ScaffoldMessengerState>();
   String? _busyId;
 
   ChatKey get _key => ChatKey(widget.chat);
 
-  void _snack(String text, {bool error = false}) {
-    _msg.currentState
-      ?..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(text),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: error ? const Color(0xFF9F1D1D) : null,
-        ),
-      );
+  void _toast(String text, {bool error = false}) {
+    if (!mounted) return;
+    PfToast.show(
+      context,
+      text,
+      kind: error ? PfToastKind.error : PfToastKind.success,
+      bottomClearance: kSheetToastClearance,
+    );
   }
 
   Future<void> _run(
@@ -78,7 +76,7 @@ class _RemindersSheetState extends ConsumerState<_RemindersSheet> {
     final done = await action();
     if (!mounted) return;
     setState(() => _busyId = null);
-    _snack(
+    _toast(
       done ? ok : 'No se pudo completar la acción. Intenta de nuevo.',
       error: !done,
     );
@@ -99,19 +97,19 @@ class _RemindersSheetState extends ConsumerState<_RemindersSheet> {
     if (!mounted) return;
     setState(() => _busyId = null);
     if (o == null) {
-      _snack('No se pudo completar la acción. Intenta de nuevo.', error: true);
+      _toast('No se pudo completar la acción. Intenta de nuevo.', error: true);
     } else if (o.partial) {
-      _snack(
+      _toast(
         'Se creó el nuevo recordatorio; el anterior no se pudo cerrar',
         error: true,
       );
     } else if (o.reloadFailed) {
-      _snack(
+      _toast(
         'Recordatorio extendido, pero no pudimos actualizar la lista',
         error: true,
       );
     } else {
-      _snack('Recordatorio extendido');
+      _toast('Recordatorio extendido');
     }
   }
 
@@ -137,7 +135,7 @@ class _RemindersSheetState extends ConsumerState<_RemindersSheet> {
       time.minute,
     );
     if (minutesUntil(ref.read(reminderClockProvider)(), until) == null) {
-      _snack('Elige una fecha y hora futuras', error: true);
+      _toast('Elige una fecha y hora futuras', error: true);
       return;
     }
     await _extend(r, until);
@@ -178,13 +176,21 @@ class _RemindersSheetState extends ConsumerState<_RemindersSheet> {
   }
 
   Future<void> _create() async {
-    await showClientReminderSheet(context, widget.chat);
+    // La lista sigue abierta debajo: el aviso queda sobre su botón.
+    await showClientReminderSheet(
+      context,
+      widget.chat,
+      successTarget: PfToast.capture(
+        context,
+        bottomClearance: kSheetToastClearance,
+      ),
+    );
     if (!mounted) return;
     final ok = await ref
         .read(remindersControllerProvider(_key).notifier)
         .reload();
     if (!mounted || ok) return;
-    _snack('No pudimos actualizar la lista', error: true);
+    _toast('No pudimos actualizar la lista', error: true);
   }
 
   @override
@@ -197,80 +203,74 @@ class _RemindersSheetState extends ConsumerState<_RemindersSheet> {
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: SizedBox(
         height: MediaQuery.sizeOf(context).height * 0.8,
-        child: ScaffoldMessenger(
-          key: _msg,
-          child: Scaffold(
-            backgroundColor: Colors.transparent,
-            body: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                  child: Semantics(
-                    header: true,
-                    child: Text(
-                      'Recordatorios',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        color: pf.text,
-                      ),
-                    ),
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Semantics(
+                  header: true,
+                  child: Text(
+                    'Recordatorios',
+                    style: theme.textTheme.titleLarge?.copyWith(color: pf.text),
                   ),
                 ),
-                Expanded(
-                  child: async.when(
-                    skipLoadingOnReload: true,
-                    loading: () =>
-                        const Center(child: CircularProgressIndicator()),
-                    error: (_, _) => Center(
-                      child: TextButton(
-                        onPressed: () =>
-                            ref.invalidate(remindersControllerProvider(_key)),
-                        child: const Text('No pudimos cargar. Reintentar'),
-                      ),
+              ),
+              Expanded(
+                child: async.when(
+                  skipLoadingOnReload: true,
+                  loading: () =>
+                      const Center(child: CircularProgressIndicator()),
+                  error: (_, _) => Center(
+                    child: TextButton(
+                      onPressed: () =>
+                          ref.invalidate(remindersControllerProvider(_key)),
+                      child: const Text('No pudimos cargar. Reintentar'),
                     ),
-                    data: (items) => items.isEmpty
-                        ? Center(
-                            child: Text(
-                              'Sin recordatorios pendientes',
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: pf.text2,
-                              ),
-                            ),
-                          )
-                        : ListView.separated(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            itemCount: items.length,
-                            separatorBuilder: (_, _) =>
-                                const Divider(height: 1),
-                            itemBuilder: (_, i) => _ReminderTile(
-                              reminder: items[i],
-                              now: now,
-                              busy: _busyId == items[i].id,
-                              onResolve: () => _resolve(items[i]),
-                              onExtend: () => _showExtendOptions(items[i]),
+                  ),
+                  data: (items) => items.isEmpty
+                      ? Center(
+                          child: Text(
+                            'Sin recordatorios pendientes',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: pf.text2,
                             ),
                           ),
+                        )
+                      : ListView.separated(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          itemCount: items.length,
+                          separatorBuilder: (_, _) => const Divider(height: 1),
+                          itemBuilder: (_, i) => _ReminderTile(
+                            reminder: items[i],
+                            now: now,
+                            busy: _busyId == items[i].id,
+                            onResolve: () => _resolve(items[i]),
+                            onExtend: () => _showExtendOptions(items[i]),
+                          ),
+                        ),
+                ),
+              ),
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  8,
+                  16,
+                  16 + MediaQuery.paddingOf(context).bottom,
+                ),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: FilledButton.icon(
+                    onPressed: _create,
+                    icon: const Icon(Icons.add_alert_outlined),
+                    label: const Text('Nuevo recordatorio'),
                   ),
                 ),
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    16,
-                    8,
-                    16,
-                    16 + MediaQuery.paddingOf(context).bottom,
-                  ),
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: FilledButton.icon(
-                      onPressed: _create,
-                      icon: const Icon(Icons.add_alert_outlined),
-                      label: const Text('Nuevo recordatorio'),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

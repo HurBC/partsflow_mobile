@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:partsflow_mobile/core/ui/toast/pf_toast.dart';
 import 'package:partsflow_mobile/features/chat/presentation/utils/media_files.dart';
 import 'package:video_player/video_player.dart';
 
@@ -99,11 +100,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
         ? await openLocalFile(file.path, mime: widget.mime)
         : await openExternal(widget.uri!);
     if (!ok && mounted) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(content: Text('No hay una app para abrir este video')),
-        );
+      PfToast.show(
+        context,
+        'No hay una app para abrir este video',
+        kind: PfToastKind.error,
+      );
     }
   }
 
