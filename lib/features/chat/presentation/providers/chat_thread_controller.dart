@@ -867,7 +867,39 @@ class ChatThread extends _$ChatThread {
     if (res.ok && ref.mounted) {
       _note(on ? 'Julia activada' : 'Julia en pausa');
     }
+    if (res.ok && on && ref.mounted) {
+      unawaited(_triggerOrderTaker(state.chat.phone));
+    }
     return res;
+  }
+
+  static const _orderTakerTimeout = Duration(seconds: 45);
+
+  /// Igual que el BO tras activar Julia: POST agents/llm/order_taker/{phone}/
+  /// para que atienda ya el mensaje pendiente. No bloquea el toggle ni revierte
+  /// el modo; si expira solo se registra (el servidor sigue procesando).
+  bool _orderTakerInFlight = false;
+
+  Future<void> _triggerOrderTaker(String phone) async {
+    if (_orderTakerInFlight) return;
+    _orderTakerInFlight = true;
+    try {
+      final r = await ref
+          .read(chatRepositoryProvider)
+          .triggerOrderTaker(phone)
+          .timeout(_orderTakerTimeout);
+      if (!ref.mounted) return;
+      if (r is Err && state.chat.client?.operationMode == 'automatic') {
+        _note(
+          'Julia quedó activa, pero no pudo atender ahora; responderá cuando '
+          'el cliente vuelva a escribir.',
+        );
+      }
+    } on TimeoutException {
+      pfLog('order_taker: sin respuesta en ${_orderTakerTimeout.inSeconds}s');
+    } finally {
+      _orderTakerInFlight = false;
+    }
   }
 
   /// Igual que el BO (ChatDetailTobBar.tsx): PATCH clients/{id}/update/ con

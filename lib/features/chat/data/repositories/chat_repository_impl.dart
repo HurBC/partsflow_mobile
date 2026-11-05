@@ -220,6 +220,12 @@ class ChatRepositoryImpl implements ChatRepository {
   });
 
   @override
+  Future<Result<bool>> triggerOrderTaker(String phone) => _guard(() async {
+    await _remote.triggerOrderTaker(phone);
+    return true;
+  });
+
+  @override
   Future<Result<bool>> usesWhatsappApi(String subsidiaryId) => _guard(() async {
     final data = asMap(await _remote.supplier(subsidiaryId));
     final configs = asList(data?['configs']);

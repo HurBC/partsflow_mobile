@@ -84,6 +84,9 @@ abstract class ChatRepository {
     Map<String, Object?> fields,
   );
 
+  /// POST `agents/llm/order_taker/{phone}/`: Julia atiende ya el mensaje pendiente.
+  Future<Result<bool>> triggerOrderTaker(String phone);
+
   /// true si el tenant usa la API oficial de WhatsApp (aplica la ventana de 24 h).
   Future<Result<bool>> usesWhatsappApi(String subsidiaryId);
 
