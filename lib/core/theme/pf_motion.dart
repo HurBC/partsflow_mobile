@@ -31,6 +31,12 @@ abstract class PfMotion {
   static const tickPop = Duration(milliseconds: 320);
   static const errorShake = Duration(milliseconds: 420);
 
+  // Audio (grabación y burbuja).
+  static const recDotBreath = Duration(milliseconds: 1200);
+  static const recAmpSample = Duration(milliseconds: 100);
+  static const recDiscard = Duration(milliseconds: 340);
+  static const audioPlayMorph = Duration(milliseconds: 220);
+
   /// Con "reducir animaciones" solo hay fundido.
   static const reducedFade = Duration(milliseconds: 160);
 
